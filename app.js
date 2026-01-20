@@ -1,11 +1,11 @@
 // app.js — INEA Conseil — Simulation d’appel client IA (vocal d’abord, texte ensuite)
 // ✅ Mode appel : le client PARLE d’abord, la retranscription s’affiche APRÈS
-// ✅ Verrou CLIENT (anti “je suis vendeur” / anti hors-sujet)
-// ✅ Anti-prénoms (ne t’appelle jamais “Claire” + nettoyage automatique)
-// ✅ Année actuelle (automatique) + règle “nous sommes en 2026” si tu veux la fixer
-// ✅ Micro dictée (tu peux parler, réfléchir, reprendre, puis envoyer)
-// ✅ Export retranscription
-// ✅ Fallback modèles : 3B puis 1B si la machine ne tient pas
+// ✅ DEBRIEF : écrit uniquement (jamais lu à voix haute)
+// ✅ Verrou CLIENT + anti “vendeur” + anti hors-sujet + année 2026
+// ✅ Anti-prénoms : ne t’appelle pas “Claire” (nettoyage automatique)
+// ✅ Timer d’appel + sonnerie (sans fichier externe) + états visuels (réfléchit / parle / prêt)
+// ✅ Micro dictée + Export retranscription
+// ✅ Fallback modèles : 3B puis 1B si besoin
 
 import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
@@ -22,7 +22,7 @@ const voiceStatusEl = document.getElementById("voiceStatus");
 const loadBtn = document.getElementById("loadBtn");
 const ttsBtn = document.getElementById("ttsBtn");
 
-const personaSel = document.getElementById("persona"); // values: achats / ops / daf
+const personaSel = document.getElementById("persona"); // achats / ops / daf
 const levelSel = document.getElementById("level");     // facile / moyen / expert
 
 const draftEl = document.getElementById("draft");
@@ -32,6 +32,12 @@ const sendBtn = document.getElementById("sendBtn");
 const debriefBtn = document.getElementById("debriefBtn");
 const resetBtn = document.getElementById("resetBtn");
 const exportBtn = document.getElementById("exportBtn");
+
+// Optional UI elements (from your “call-style” HTML)
+// If not present, we create a timer pill automatically.
+const calleeNameEl = document.querySelector(".calleeName");   // optional
+const callDotEl = document.querySelector(".dot");             // optional
+const callBadgeEl = document.querySelector(".callBadge");     // optional
 
 /* =========================
    State
@@ -46,11 +52,19 @@ let bestVoice = null;
 let isListening = false;
 let suppressMicRestart = false;
 
+// Call timer
+let callStartMs = null;
+let callTimerInterval = null;
+let callTimerEl = document.getElementById("callTimer");
+
+// Audio (ringtone / beeps)
+let audioCtx = null;
+
 /* =========================
-   Time (current year)
-   - Si tu veux FORCER 2026, remplace la ligne par: const CURRENT_YEAR = 2026;
+   Time
 ========================= */
-const CURRENT_YEAR = new Date().getFullYear();
+// Tu as demandé explicitement 2026.
+const CURRENT_YEAR = 2026;
 
 /* =========================
    UI helpers
@@ -86,6 +100,155 @@ function addBubble(roleClass, who, text) {
 
 function logToTranscript(role, text) {
   transcript.push({ ts: new Date().toISOString(), role, text });
+}
+
+/* =========================
+   Call UI state (visual)
+========================= */
+function setCallState(state) {
+  // state: "idle" | "ready" | "thinking" | "speaking" | "debrief" | "error"
+  document.body.dataset.callState = state;
+
+  // little visual cue on the red dot (if exists)
+  if (callDotEl) {
+    if (state === "speaking") {
+      callDotEl.style.boxShadow = "0 0 0 8px rgba(227,6,19,.22)";
+    } else if (state === "thinking") {
+      callDotEl.style.boxShadow = "0 0 0 8px rgba(17,24,39,.12)";
+    } else {
+      callDotEl.style.boxShadow = "0 0 0 6px rgba(227,6,19,.12)";
+    }
+  }
+
+  // optional badge text
+  if (callBadgeEl) {
+    const strong = callBadgeEl.querySelector("strong");
+    const span = callBadgeEl.querySelector("span:nth-child(2)");
+    // keep it safe if structure differs
+    if (span) {
+      if (state === "speaking") span.textContent = "Client IA • parle";
+      else if (state === "thinking") span.textContent = "Client IA • réfléchit";
+      else if (state === "debrief") span.textContent = "Client IA • debrief";
+      else if (state === "error") span.textContent = "Client IA • erreur";
+      else span.textContent = "Client IA • simulation";
+      if (strong) strong.textContent = "Client IA";
+    }
+  }
+}
+
+function updateCalleeTitle() {
+  const p = PERSONAS[personaSel.value] || PERSONAS.achats;
+  if (calleeNameEl) {
+    calleeNameEl.textContent = `Client — ${p.label}`;
+  }
+}
+
+/* =========================
+   Timer
+========================= */
+function ensureTimerEl() {
+  if (callTimerEl) return;
+
+  // create a pill in header status row if possible
+  const statusRow = statusEl?.parentElement; // .statusRow or .statusBar
+  if (statusRow) {
+    const pill = document.createElement("div");
+    pill.className = "pill";
+    pill.id = "callTimer";
+    pill.innerHTML = "<strong>Appel</strong>: 00:00";
+    statusRow.appendChild(pill);
+    callTimerEl = pill;
+  }
+}
+
+function fmtMMSS(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const mm = String(Math.floor(s / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return `${mm}:${ss}`;
+}
+
+function startCallTimer() {
+  ensureTimerEl();
+  stopCallTimer();
+  callStartMs = Date.now();
+  if (callTimerEl) callTimerEl.innerHTML = `<strong>Appel</strong>: 00:00`;
+  callTimerInterval = setInterval(() => {
+    if (!callStartMs) return;
+    const elapsed = Date.now() - callStartMs;
+    if (callTimerEl) callTimerEl.innerHTML = `<strong>Appel</strong>: ${fmtMMSS(elapsed)}`;
+  }, 250);
+}
+
+function stopCallTimer() {
+  if (callTimerInterval) clearInterval(callTimerInterval);
+  callTimerInterval = null;
+}
+
+function resetCallTimer() {
+  stopCallTimer();
+  callStartMs = null;
+  ensureTimerEl();
+  if (callTimerEl) callTimerEl.innerHTML = `<strong>Appel</strong>: 00:00`;
+}
+
+/* =========================
+   WebAudio (sonnerie / beep)
+   - Sans fichier externe, 100% gratuit
+========================= */
+function getAudioCtx() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return audioCtx;
+}
+
+function playTone(freq, durationMs, gain = 0.06, type = "sine") {
+  const ctx = getAudioCtx();
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+
+  o.type = type;
+  o.frequency.value = freq;
+  g.gain.value = gain;
+
+  o.connect(g);
+  g.connect(ctx.destination);
+
+  const now = ctx.currentTime;
+  o.start(now);
+  o.stop(now + durationMs / 1000);
+
+  // quick fade-out to avoid clicks
+  g.gain.setValueAtTime(gain, now);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + durationMs / 1000);
+
+  return new Promise((res) => setTimeout(res, durationMs));
+}
+
+async function playRingtone() {
+  // A short “ring ring” effect (two-tone), avoids being too loud
+  try {
+    const ctx = getAudioCtx();
+    if (ctx.state === "suspended") await ctx.resume();
+
+    // ring pattern
+    await playTone(440, 180, 0.05, "sine");
+    await playTone(660, 180, 0.05, "sine");
+    await new Promise(r => setTimeout(r, 120));
+    await playTone(440, 180, 0.05, "sine");
+    await playTone(660, 180, 0.05, "sine");
+  } catch (_) {
+    // ignore if blocked
+  }
+}
+
+async function playBeep() {
+  try {
+    const ctx = getAudioCtx();
+    if (ctx.state === "suspended") await ctx.resume();
+    await playTone(880, 90, 0.04, "square");
+  } catch (_) {}
 }
 
 /* =========================
@@ -215,15 +378,14 @@ if (rec) {
 
 /* =========================
    PERSONAS (match index.html: achats / ops / daf)
-   IMPORTANT: on NE DONNE PAS de prénom au modèle => anti “Bonjour Claire”
+   IMPORTANT: aucun prénom => anti “Bonjour Claire”
 ========================= */
 const PERSONAS = {
   achats: {
-    label: "Responsable Achats",
+    label: "Achats (comparaison fournisseurs)",
     prompt: `
 Identité:
-- Tu es Responsable Achats (B2B).
-- Tu ne donnes pas ton prénom.
+- Tu es Responsable Achats (B2B). Tu ne donnes pas ton prénom.
 Contexte:
 - Tu compares 2 à 3 prestataires (formation, accompagnement, outils d'entraînement commercial).
 Comportement:
@@ -234,11 +396,10 @@ Comportement:
   },
 
   ops: {
-    label: "Directrice des opérations",
+    label: "Ops (problème terrain urgent)",
     prompt: `
 Identité:
-- Tu es Directrice des opérations (B2B).
-- Tu ne donnes pas ton prénom.
+- Tu es Directrice des opérations (B2B). Tu ne donnes pas ton prénom.
 Contexte:
 - Problème terrain: qualité irrégulière des rendez-vous, discours hétérogène, adoption faible des pratiques.
 Comportement:
@@ -249,11 +410,10 @@ Comportement:
   },
 
   daf: {
-    label: "Directrice financière",
+    label: "DAF (validation / négociation)",
     prompt: `
 Identité:
-- Tu es Directrice financière (B2B).
-- Tu ne donnes pas ton prénom.
+- Tu es Directrice financière (B2B). Tu ne donnes pas ton prénom.
 Contexte:
 - Tu valides un budget et limites le risque.
 Comportement:
@@ -265,42 +425,36 @@ Comportement:
 
 /* =========================
    HARD VERROUS (post-traitement)
-   1) Anti-prénoms (supprime “Bonjour Claire”, etc.)
-   2) Anti-vendeur (si ça ressemble à un vendeur, on recadre)
 ========================= */
 function sanitizeClientText(text) {
   let t = (text || "").trim();
 
-  // Supprime un "Bonjour + Prénom" au début (Bonjour Claire / Bonsoir Paul / Salut Sophie, etc.)
-  // => "Bonjour. ..."
+  // Supprime un "Bonjour + Prénom" au début => "Bonjour. ..."
   t = t.replace(
     /^(bonjour|bonsoir|salut)\s*,?\s*[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ-]+(\s+[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ-]+)?\s*!?\s*/i,
     "$1. "
   );
 
-  // Supprime occurrences "Claire" (au cas où)
+  // Neutralise certains prénoms si jamais le modèle insiste
   t = t.replace(/\bClaire\b/gi, "");
-
-  // Nettoyage espaces
   t = t.replace(/\s{2,}/g, " ").trim();
   return t;
 }
 
 function looksLikeSeller(text) {
-  // Indices fréquents de dérive vendeur/catalogue
-  return /(je vous propose|nous proposons|nos (offres|modèles|solutions)|je peux vous vendre|prix de vente|modèle de\s+\d{4}|voiture|mercedes)/i.test(text);
+  return /(je vous propose|nous proposons|nos (offres|modèles|solutions)|catalogue|voici nos|je peux vous vendre|mercedes|voiture)/i.test(text);
 }
 
 function forceClientRecovery() {
   return [
     "Pardon, je reformule en tant que cliente.",
     "Je cherche surtout à comprendre ce que vous pouvez m’apporter concrètement.",
-    "Pouvez-vous m’expliquer votre approche, ce qui vous différencie, et comment on déploie ça sans complexifier le quotidien ?"
+    "Pouvez-vous m’expliquer votre approche, vos preuves de valeur, et comment on déploie ça simplement ?"
   ].join(" ");
 }
 
 /* =========================
-   SYSTEM PROMPT (verrou CLIENT + année actuelle + mode appel)
+   SYSTEM PROMPT (verrou CLIENT + année + style oral)
 ========================= */
 function buildSystemPrompt() {
   const lvl = levelSel.value;
@@ -310,20 +464,21 @@ function buildSystemPrompt() {
 Contexte temporel:
 - Nous sommes en ${CURRENT_YEAR}.
 - Tu raisonnes comme un professionnel en ${CURRENT_YEAR}.
-- Tu ne mentionnes jamais de "date de coupure", "bloqué en 2023", ni des limites techniques.
+- Tu ne mentionnes jamais "bloqué en 2023" ni des limites techniques.
 
 Rôle (VERROUILLÉ):
 - Tu es STRICTEMENT un CLIENT B2B dans une simulation d'appel téléphonique.
 - Ton interlocuteur est un COMMERCIAL (ou manager en entraînement).
 - Tu n'es jamais vendeur, jamais formateur, jamais coach, jamais assistant.
 
-Règles strictes (IMPORTANT):
-- Tu ne vends rien. Tu n'essaies pas de convaincre.
-- Interdit d'utiliser des formulations de vendeur: "je vous propose", "nous proposons", "nos offres", "nos modèles", "nos solutions".
-- Interdit de partir hors contexte (pas de voitures, pas de catalogue produits).
-- Tu n'utilises aucun prénom (ni le tien, ni celui du commercial). Tu dis "Bonjour", "Merci", "D'accord".
-- Réponses courtes: 2 à 5 phrases maximum (sauf DEBRIEF).
-- Français naturel (France), style oral. Pas de listes à puces pendant l'appel.
+Règles strictes:
+- Tu ne vends rien. Tu ne proposes pas d'offres.
+- Interdit: "je vous propose", "nous proposons", "nos offres", "nos modèles", "nos solutions".
+- Interdit hors contexte (pas de voitures, pas de sujets non liés à un échange B2B).
+- Tu n'utilises aucun prénom (ni le tien, ni celui du commercial).
+- Style oral, français naturel (France).
+- 2 à 5 phrases maximum par réponse (sauf DEBRIEF).
+- Pas de listes à puces pendant l'appel (sauf DEBRIEF).
 
 Difficulté:
 - ${lvl}
@@ -331,7 +486,7 @@ Difficulté:
   * moyen: objections réalistes, demande de preuves
   * expert: très exigeant, challenge prix/risque/déploiement
 
-DEBRIEF (commande spéciale):
+DEBRIEF:
 - Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu fournis EN FRANÇAIS:
   1) Retranscription propre (COMMERCIAL / CLIENT)
   2) Note /20 : Accroche(0-4), Découverte(0-4), Valeur(0-4), Objections(0-4), Closing(0-4)
@@ -339,6 +494,7 @@ DEBRIEF (commande spéciale):
   4) 5 reformulations prêtes à dire
   5) Plan d'entraînement sur 7 jours
   Termine par "FIN DEBRIEF".
+  IMPORTANT: le DEBRIEF doit être écrit et structuré.
 
 Persona actif:
 - ${p.label}
@@ -368,9 +524,11 @@ function hasWebGPU() {
    Load model
 ========================= */
 async function loadModel() {
+  setCallState("thinking");
   setStatus("chargement…");
 
   if (!hasWebGPU()) {
+    setCallState("error");
     setStatus("WebGPU indisponible");
     setModelStatus("Erreur: WebGPU non disponible");
     addBubble("system", "SYSTEM", "WebGPU indisponible. Essaie Edge/Chrome récent + accélération matérielle.");
@@ -392,6 +550,7 @@ async function loadModel() {
       await engine.reload(modelId, config);
       loaded = true;
 
+      setCallState("ready");
       setStatus("appel prêt");
       setModelStatus(modelId);
 
@@ -399,7 +558,10 @@ async function loadModel() {
       transcript = [];
       chatEl.innerHTML = "";
 
-      addBubble("system", "SYSTEM", `✅ IA chargée. Mode appel activé (voix d’abord, texte ensuite). Persona: ${PERSONAS[personaSel.value]?.label || "Achats"}.`);
+      updateCalleeTitle();
+      startCallTimer();
+
+      addBubble("system", "SYSTEM", `✅ IA chargée. Mode appel activé. Persona: ${PERSONAS[personaSel.value]?.label || "Achats"}.`);
       logToTranscript("SYSTEM", `IA chargée: ${modelId}`);
 
       ttsBtn.disabled = false;
@@ -417,6 +579,7 @@ async function loadModel() {
   }
 
   if (!loaded) {
+    setCallState("error");
     setStatus("erreur chargement modèle");
     setModelStatus("échec (tous modèles)");
     addBubble("system", "SYSTEM", "Impossible de charger le modèle. Ouvre F12 → Console et copie la 1ère erreur rouge.");
@@ -427,32 +590,43 @@ async function loadModel() {
 /* =========================
    Ask AI — MODE APPEL
    ✅ Génère la réponse sans l’afficher
-   ✅ L’IA PARLE
+   ✅ (si pas DEBRIEF) L’IA PARLE
    ✅ Puis affiche la retranscription
+   ✅ (si DEBRIEF) écrit uniquement (pas de voix)
 ========================= */
 async function askAI(userText) {
   if (!engine) return;
 
+  const raw = (userText || "").trim();
+  if (!raw) return;
+
+  const isDebrief = raw.toUpperCase() === "DEBRIEF";
+
   // Stop voix en cours pour éviter chevauchement
   window.speechSynthesis.cancel();
 
-  // Retranscription COMMERCIAL (immédiate)
-  addBubble("user", "COMMERCIAL (retranscription)", userText);
-  logToTranscript("COMMERCIAL", userText);
-  messages.push({ role: "user", content: userText });
+  // Beep à l'envoi (effet “appel”)
+  await playBeep();
 
-  setStatus("le client réfléchit…");
+  // Retranscription COMMERCIAL (immédiate)
+  addBubble("user", "COMMERCIAL (retranscription)", raw);
+  logToTranscript("COMMERCIAL", raw);
+  messages.push({ role: "user", content: raw });
+
+  setCallState("thinking");
+  setStatus(isDebrief ? "debrief (écrit)…" : "le client réfléchit…");
 
   // Génération (sans streaming affiché)
   let finalText = "";
   try {
     const completion = await engine.chat.completions.create({
       messages,
-      temperature: 0.7,
-      max_tokens: 280
+      temperature: isDebrief ? 0.4 : 0.7,
+      max_tokens: isDebrief ? 520 : 260
     });
     finalText = (completion?.choices?.[0]?.message?.content || "").trim();
   } catch (e) {
+    setCallState("error");
     addBubble("system", "SYSTEM", "Erreur IA pendant la réponse.");
     setStatus("erreur");
     console.error(e);
@@ -463,22 +637,29 @@ async function askAI(userText) {
 
   // Verrous post-traitement
   finalText = sanitizeClientText(finalText);
-  if (looksLikeSeller(finalText)) finalText = forceClientRecovery();
+  if (!isDebrief && looksLikeSeller(finalText)) finalText = forceClientRecovery();
 
   // Ajouter au contexte conversation
   messages.push({ role: "assistant", content: finalText });
-  logToTranscript("CLIENT", finalText);
+  logToTranscript(isDebrief ? "DEBRIEF" : "CLIENT", finalText);
 
-  // VOIX D’ABORD
-  setStatus("le client parle…");
-  speak(finalText);
+  // MODE APPEL
+  if (!isDebrief) {
+    setCallState("speaking");
+    setStatus("le client parle…");
+    speak(finalText);
+    await waitForSpeechEnd();
 
-  // Attendre fin voix
-  await waitForSpeechEnd();
+    // Puis affichage retranscription CLIENT
+    addBubble("client", "CLIENT (retranscription)", finalText);
+  } else {
+    // DEBRIEF : écrit uniquement (pas de voix)
+    setCallState("debrief");
+    setStatus("debrief (écrit) prêt");
+    addBubble("system", "DEBRIEF (écrit)", finalText);
+  }
 
-  // Puis affichage retranscription CLIENT
-  addBubble("client", "CLIENT (retranscription)", finalText);
-
+  setCallState("ready");
   setStatus("appel prêt");
 }
 
@@ -503,10 +684,15 @@ function exportTranscript() {
 ========================= */
 loadBtn.onclick = async () => {
   loadBtn.disabled = true;
+
+  // Sonnerie au clic (effet “décrocher”)
+  await playRingtone();
+
   try {
     await loadModel();
   } catch (e) {
     loadBtn.disabled = false;
+    setCallState("error");
     setStatus("erreur chargement modèle");
     addBubble("system", "SYSTEM", "Erreur chargement modèle : ouvre F12 → Console et copie la 1ère erreur rouge.");
     addBubble("system", "SYSTEM", String(e));
@@ -543,16 +729,23 @@ resetBtn.onclick = () => {
   transcript = [];
   chatEl.innerHTML = "";
 
-  const p = PERSONAS[personaSel.value] || PERSONAS.achats;
-  addBubble("system", "SYSTEM", `Session réinitialisée. Persona actif: ${p.label}. Mode appel prêt.`);
+  updateCalleeTitle();
+  resetCallTimer();
+
+  addBubble("system", "SYSTEM", `Session réinitialisée. Persona actif: ${PERSONAS[personaSel.value]?.label || "Achats"}.`);
   logToTranscript("SYSTEM", "Session réinitialisée.");
+
+  setCallState("ready");
   setStatus("appel prêt");
 };
 
 exportBtn.onclick = exportTranscript;
 
 // Changement persona / niveau => reset (nouveau prompt)
-personaSel.onchange = () => { if (engine) resetBtn.click(); };
+personaSel.onchange = () => {
+  updateCalleeTitle();
+  if (engine) resetBtn.click();
+};
 levelSel.onchange = () => { if (engine) resetBtn.click(); };
 
 // Ctrl + Entrée = envoyer
@@ -566,11 +759,14 @@ draftEl.addEventListener("keydown", (e) => {
 /* =========================
    Init
 ========================= */
+ensureTimerEl();
+updateCalleeTitle();
+setCallState("idle");
 setStatus("prêt");
 addBubble(
   "system",
   "SYSTEM",
-  "Clique “Charger l’IA”. Puis dicte dans le brouillon → “Envoyer”. Mode appel: le client parle d’abord, la retranscription s’affiche ensuite."
+  "Clique “Charger l’IA” (sonnerie + démarrage appel). Puis dicte dans le brouillon → “Envoyer”. Mode appel: voix d’abord, texte après. DEBRIEF: écrit uniquement."
 );
 logToTranscript("SYSTEM", "Page ouverte.");
 
