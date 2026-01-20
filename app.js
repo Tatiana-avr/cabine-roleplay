@@ -389,44 +389,58 @@ async function askAI(userText) {
 
   setStatus("réponse du client…");
 
-  streamingTextEl = addBubble("client", "CLIENT", "");
+  async function askAI(userText) {
+  if (!engine) return;
+
+  window.speechSynthesis.cancel();
+
+  // Affichage côté commercial (retranscription immédiate)
+  addBubble("user", "COMMERCIAL", userText);
+  logToTranscript("COMMERCIAL", userText);
+  messages.push({ role: "user", content: userText });
+
+  setStatus("le client réfléchit…");
+
+  // Génération SANS affichage
   let finalText = "";
 
   try {
-    const stream = await engine.chat.completions.create({
+    const completion = await engine.chat.completions.create({
       messages,
       temperature: 0.7,
-      max_tokens: 240,
-      stream: true
+      max_tokens: 260
     });
 
-    for await (const chunk of stream) {
-      const delta = chunk?.choices?.[0]?.delta?.content || "";
-      if (!delta) continue;
-      finalText += delta;
-      streamingTextEl.textContent = finalText;
-      scrollChat();
-    }
+    finalText = completion.choices[0].message.content.trim();
   } catch (e) {
-    streamingTextEl.textContent = "Erreur: réponse impossible. Réessaie.";
+    addBubble("system", "SYSTEM", "Erreur IA.");
     setStatus("erreur");
-    messages.push({ role: "assistant", content: "(erreur)" });
-    logToTranscript("CLIENT", "(erreur)");
-    streamingTextEl = null;
     return;
   }
 
-  finalText = (finalText || "").trim() || "(pas de réponse)";
-  streamingTextEl.textContent = finalText;
-  streamingTextEl = null;
-
-  messages.push({ role: "assistant", content: finalText });
-  logToTranscript("CLIENT", finalText);
-
+  // 👉 L’IA PARLE D’ABORD
+  setStatus("le client parle…");
   speak(finalText);
-  setStatus("prêt");
-}
 
+  // On attend la fin de la voix avant d’afficher le texte
+  await waitForSpeechEnd();
+
+  // 👉 PUIS on affiche la retranscription
+  addBubble("client", "CLIENT (retranscription)", finalText);
+  logToTranscript("CLIENT", finalText);
+  messages.push({ role: "assistant", content: finalText });
+
+  setStatus("appel en cours");
+}
+   function waitForSpeechEnd() {
+  return new Promise((resolve) => {
+    const check = () => {
+      if (!speechSynthesis.speaking) resolve();
+      else setTimeout(check, 100);
+    };
+    check();
+  });
+}
 /* =========================
    Export
 ========================= */
