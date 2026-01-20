@@ -1,4 +1,5 @@
-import { CreateMLCEngine } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
+// ✅ Version robuste : MLCEngine + prebuiltAppConfig (évite les erreurs "chargement modèle")
+import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
 /* =========================
    DOM
@@ -28,8 +29,8 @@ const exportBtn = document.getElementById("exportBtn");
    State
 ========================= */
 let engine = null;
-let messages = [];     // historique complet (non limité)
-let transcript = [];   // export complet
+let messages = [];
+let transcript = [];
 
 let ttsEnabled = true;
 let bestVoice = null;
@@ -37,7 +38,7 @@ let bestVoice = null;
 let isListening = false;
 let suppressMicRestart = false;
 
-let streamingBubble = null; // bubble en cours de streaming (pour éviter doublon)
+let streamingTextEl = null;
 
 /* =========================
    UI helpers
@@ -49,28 +50,28 @@ function setVoiceStatus(txt){ voiceStatusEl.textContent = `Voix: ${txt}`; }
 
 function scrollChat(){ chatEl.scrollTop = chatEl.scrollHeight; }
 
-function addBubble({role, text, meta}) {
+function nowStamp(){
+  return new Date().toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"});
+}
+
+function addBubble(role, who, text){
   const bubble = document.createElement("div");
   bubble.className = `bubble ${role}`;
 
-  const metaEl = document.createElement("div");
-  metaEl.className = "meta";
-  metaEl.textContent = meta || "";
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  meta.textContent = `${nowStamp()} • ${who}`;
 
-  const textEl = document.createElement("div");
-  textEl.className = "text";
-  textEl.textContent = text || "";
+  const body = document.createElement("div");
+  body.className = "text";
+  body.textContent = text || "";
 
-  bubble.appendChild(metaEl);
-  bubble.appendChild(textEl);
+  bubble.appendChild(meta);
+  bubble.appendChild(body);
   chatEl.appendChild(bubble);
   scrollChat();
 
-  return { bubble, textEl };
-}
-
-function nowStamp(){
-  return new Date().toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"});
+  return body; // on renvoie le node texte (utile pour streaming)
 }
 
 function logToTranscript(role, text){
@@ -111,10 +112,7 @@ function speak(text){
 }
 
 /* =========================
-   STT (speech recognition) => MODE DICTÉE
-   - n’envoie rien automatiquement
-   - ajoute au brouillon
-   - redémarre si ça coupe
+   STT (speech recognition) => dictée
 ========================= */
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const rec = SpeechRecognition ? new SpeechRecognition() : null;
@@ -135,7 +133,7 @@ function startListening(){
   }
   suppressMicRestart = false;
   isListening = true;
-  setMicStatus("écoute… (dictée)");
+  setMicStatus("écoute…");
   micStartBtn.disabled = true;
   micStopBtn.disabled = false;
 
@@ -155,7 +153,6 @@ function stopListening(){
 
 if (rec) {
   rec.onresult = (evt) => {
-    // Ajouter toutes les phrases finalisées au brouillon
     let chunk = "";
     for (let i = evt.resultIndex; i < evt.results.length; i++) {
       const r = evt.results[i];
@@ -164,7 +161,6 @@ if (rec) {
     chunk = (chunk || "").trim();
     if (!chunk) return;
 
-    // Ajout au brouillon sans envoyer
     draftEl.value = (draftEl.value ? (draftEl.value + " ") : "") + chunk;
     draftEl.focus();
   };
@@ -177,7 +173,6 @@ if (rec) {
   };
 
   rec.onend = () => {
-    // Si ça coupe tout seul pendant l’écoute, on relance (mode dictée)
     if (isListening && !suppressMicRestart) {
       try { rec.start(); } catch (_) {}
     } else {
@@ -242,21 +237,28 @@ function buildSystem(){
 
 /* =========================
    Model
+   ✅ On met un modèle "low resource" et plus rapide.
+   Tu peux repasser en 3B si les PC sont puissants.
 ========================= */
-const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
 
 /* =========================
-   Load model
+   Load model (robuste)
 ========================= */
 async function loadModel(){
-  setStatus("chargement… (1ère fois = téléchargement)");
-  setModelStatus("téléchargement…");
+  setStatus("chargement…");
+  setModelStatus(`chargement: ${MODEL_ID}`);
 
-  engine = await CreateMLCEngine(MODEL_ID, {
+  engine = new webllm.MLCEngine();
+
+  const config = {
+    ...webllm.prebuiltAppConfig,
     initProgressCallback: (p) => {
       if (p?.text) setModelStatus(p.text);
     }
-  });
+  };
+
+  await engine.reload(MODEL_ID, config);
 
   setStatus("modèle prêt");
   setModelStatus(MODEL_ID);
@@ -265,10 +267,9 @@ async function loadModel(){
   transcript = [];
   chatEl.innerHTML = "";
 
-  addBubble({ role:"system", meta:`${nowStamp()} • SYSTEM`, text:"Modèle chargé. Utilise le micro en mode dictée, puis clique “Envoyer au client” quand tu es prêt." });
-  logToTranscript("SYSTEM", "Modèle chargé.");
+  addBubble("system", "SYSTEM", "IA chargée. Dicte dans le brouillon, puis clique “Envoyer au client”.");
+  logToTranscript("SYSTEM", "IA chargée.");
 
-  // enable UI
   ttsBtn.disabled = false;
   micStartBtn.disabled = false;
   sendBtn.disabled = false;
@@ -278,26 +279,21 @@ async function loadModel(){
 }
 
 /* =========================
-   Ask AI (streaming sans doublon)
+   Ask AI (streaming dans UNE SEULE bulle)
 ========================= */
 async function askAI(userText){
   if (!engine) return;
 
-  // stop TTS (évite écho)
   window.speechSynthesis.cancel();
 
-  // log user
-  addBubble({ role:"user", meta:`${nowStamp()} • COMMERCIAL`, text:userText });
+  addBubble("user", "COMMERCIAL", userText);
   logToTranscript("COMMERCIAL", userText);
 
   messages.push({ role:"user", content:userText });
 
   setStatus("réponse du client…");
 
-  // créer UNE SEULE bulle client qui va être remplie en streaming
-  const { textEl } = addBubble({ role:"client", meta:`${nowStamp()} • CLIENT`, text:"" });
-  streamingBubble = textEl;
-
+  streamingTextEl = addBubble("client", "CLIENT", "");
   let finalText = "";
 
   try{
@@ -312,23 +308,22 @@ async function askAI(userText){
       const delta = chunk?.choices?.[0]?.delta?.content || "";
       if (!delta) continue;
       finalText += delta;
-      // mise à jour DIRECTE de la même bulle => pas de doublon
-      streamingBubble.textContent = finalText;
+      streamingTextEl.textContent = finalText;
       scrollChat();
     }
 
   } catch(e){
-    streamingBubble.textContent = "Erreur: impossible de répondre. Réessaie.";
-    setStatus("erreur IA");
+    streamingTextEl.textContent = "Erreur: chargement/réponse impossible. Réessaie.";
+    setStatus("erreur");
     messages.push({ role:"assistant", content:"(erreur)" });
     logToTranscript("CLIENT", "(erreur)");
-    streamingBubble = null;
+    streamingTextEl = null;
     return;
   }
 
   finalText = (finalText || "").trim() || "(pas de réponse)";
-  streamingBubble.textContent = finalText;
-  streamingBubble = null;
+  streamingTextEl.textContent = finalText;
+  streamingTextEl = null;
 
   messages.push({ role:"assistant", content: finalText });
   logToTranscript("CLIENT", finalText);
@@ -359,8 +354,10 @@ loadBtn.onclick = async () => {
   try { await loadModel(); }
   catch(e){
     loadBtn.disabled = false;
-    setStatus("erreur chargement");
-    addBubble({ role:"system", meta:`${nowStamp()} • SYSTEM`, text:`Erreur chargement: ${String(e)}`});
+    setStatus("erreur chargement modèle");
+    addBubble("system", "SYSTEM", "Erreur chargement modèle : ouvre la console (F12) et copie le message d’erreur.");
+    addBubble("system", "SYSTEM", String(e));
+    console.error(e);
   }
 };
 
@@ -392,23 +389,16 @@ resetBtn.onclick = () => {
   messages = [buildSystem()];
   transcript = [];
   chatEl.innerHTML = "";
-  addBubble({ role:"system", meta:`${nowStamp()} • SYSTEM`, text:"Session réinitialisée. Persona actif. Tu peux redémarrer l’écoute et dicter ton brouillon." });
+  addBubble("system", "SYSTEM", "Session réinitialisée. Persona actif. Dicte puis envoie.");
   logToTranscript("SYSTEM", "Session réinitialisée.");
   setStatus("prêt");
 };
 
 exportBtn.onclick = exportTranscript;
 
-personaSel.onchange = () => {
-  if (!engine) return;
-  resetBtn.click();
-};
-levelSel.onchange = () => {
-  if (!engine) return;
-  resetBtn.click();
-};
+personaSel.onchange = () => { if (engine) resetBtn.click(); };
+levelSel.onchange = () => { if (engine) resetBtn.click(); };
 
-// Raccourci Ctrl+Enter pour envoyer
 draftEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
@@ -418,5 +408,5 @@ draftEl.addEventListener("keydown", (e) => {
 
 /* Init */
 setStatus("prêt");
-addBubble({ role:"system", meta:`${nowStamp()} • SYSTEM`, text:"Clique “Charger l’IA”. Ensuite : “Démarrer l’écoute” pour dicter, puis “Envoyer au client”." });
-logToTranscript("SYSTEM", "Page ouverte. En attente du chargement IA.");
+addBubble("system", "SYSTEM", "Clique “Charger l’IA”. Puis micro en dictée → “Envoyer au client”.");
+logToTranscript("SYSTEM", "Page ouverte.");
