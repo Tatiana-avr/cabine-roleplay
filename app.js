@@ -1,11 +1,3 @@
-// app.js — INEA Conseil (2026) — Jeu de rôle vocal client IA
-// - WebLLM (gratuit, local navigateur)
-// - Micro dictée (rien n'est envoyé automatiquement)
-// - Streaming (pas de doublon)
-// - Persona verrouillé CLIENT (anti "je suis vendeur")
-// - Contexte temporel 2026 (anti "bloqué en 2023")
-// - Export retranscription
-
 import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
 /* =========================
@@ -76,7 +68,6 @@ function addBubble(roleClass, who, text) {
   bubble.appendChild(body);
   chatEl.appendChild(bubble);
   scrollChat();
-
   return body; // pour streaming
 }
 
@@ -85,7 +76,7 @@ function logToTranscript(role, text) {
 }
 
 /* =========================
-   TTS (speech synthesis) + nettoyage lecture
+   TTS
 ========================= */
 function pickBestVoice() {
   const voices = window.speechSynthesis.getVoices() || [];
@@ -99,8 +90,7 @@ function pickBestVoice() {
   bestVoice =
     preferred[0] ||
     voices.find(v => v.lang?.toLowerCase().startsWith("fr")) ||
-    voices[0] ||
-    null;
+    voices[0] || null;
 
   setVoiceStatus(bestVoice ? `${bestVoice.name} (${bestVoice.lang})` : "non sélectionnée");
 }
@@ -135,9 +125,7 @@ function speak(text) {
 }
 
 /* =========================
-   STT (speech recognition) => dictée
-   - rien n'est envoyé automatiquement
-   - le brouillon accumule
+   STT (dictée)
 ========================= */
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const rec = SpeechRecognition ? new SpeechRecognition() : null;
@@ -152,10 +140,7 @@ if (rec) {
 }
 
 function startListening() {
-  if (!rec) {
-    alert("Reconnaissance vocale non supportée. Essaie Chrome ou Edge.");
-    return;
-  }
+  if (!rec) return alert("Reconnaissance vocale non supportée. Essaie Chrome ou Edge.");
   suppressMicRestart = false;
   isListening = true;
   setMicStatus("écoute…");
@@ -204,109 +189,95 @@ if (rec) {
 }
 
 /* =========================
-   PERSONAS (⚠️ clés = values du <select> HTML)
-   Ici: achats / ops / daf
+   PERSONAS (match index.html: achats / ops / daf)
 ========================= */
 const PERSONAS = {
   achats: {
     name: "Claire Martin",
-    who: "CLIENT (Achats)",
     prompt: `
 Identité:
 - Tu t'appelles Claire Martin.
 - Poste: Responsable Achats (B2B).
 
 Contexte:
-- Tu compares 2 à 3 prestataires pour un besoin lié à la performance commerciale (formation, coaching, outil d'entraînement).
-- Tu n'as pas encore choisi. Tu veux du concret, du prix, et des preuves.
+- Tu compares 2 à 3 prestataires (formation/outils d'entraînement commercial).
+- Tu veux du concret, du prix, des preuves.
 
 Comportement:
-- Polie, sceptique, factuelle, pressée.
-- Tu challengeras la valeur, les conditions, et le risque.
+- Polie, sceptique, factuelle.
 - Objections obligatoires: "on a déjà un fournisseur", "c'est cher", "prouvez-moi la valeur".
-- Tu ne donnes pas spontanément: budget exact, décideurs, calendrier — sauf si le commercial pose les bonnes questions.
+- Tu ne donnes pas spontanément: budget exact, décideurs, calendrier (sauf bonnes questions).
 `.trim()
   },
-
   ops: {
     name: "Sophia Dupont",
-    who: "CLIENT (Ops)",
     prompt: `
 Identité:
 - Tu t'appelles Sophia Dupont.
-- Poste: Directrice des opérations / exploitation (B2B).
+- Poste: Directrice des opérations (B2B).
 
 Contexte:
-- Tu constates un problème opérationnel lié à la vente: qualité irrégulière des rendez-vous, discours terrain hétérogène, adoption faible d'une méthode, perte de temps en appels improductifs.
-- Tu as 10 minutes. Tu veux une démarche simple, déployable, et pas une usine à gaz.
+- Problème: qualité irrégulière des RDV, discours terrain hétérogène, adoption faible.
+- Tu as 10 minutes. Tu veux une démarche simple, déployable.
 
 Comportement:
-- Directe, pressée, parfois impatiente.
-- Tu poses des questions sur: effort de déploiement, temps par semaine, résultats observables, contraintes terrain.
+- Directe, pressée.
 - Objections obligatoires: "je n'ai pas le temps", "on a déjà essayé", "ça va être compliqué à déployer".
 `.trim()
   },
-
   daf: {
     name: "Élodie Roux",
-    who: "CLIENT (DAF)",
     prompt: `
 Identité:
 - Tu t'appelles Élodie Roux.
-- Poste: Directrice Financière (B2B).
+- Poste: Directrice financière (B2B).
 
 Contexte:
-- Tu dois valider un budget. Tu n'as pas demandé l'échange mais tu dois challenger la dépense.
-- Tu veux limiter le risque, vérifier la conformité, et obtenir des conditions claires.
+- Tu valides un budget, tu limites le risque.
 
 Comportement:
 - Froide, logique, orientée chiffres.
-- Tu demandes: coût total, engagement, clauses, réversibilité, preuves, conditions de paiement.
 - Objections obligatoires: "retour sur investissement", "coût total", "engagement/clauses", "conformité/RGPD".
 `.trim()
   }
 };
 
 /* =========================
-   SYSTEM PROMPT (verrouillage client + 2026)
+   SYSTEM PROMPT (client verrouillé + 2026)
 ========================= */
 function buildSystemPrompt() {
   const lvl = levelSel.value;
   const CURRENT_YEAR = 2026;
-
-  const personaKey = personaSel.value;
-  const p = PERSONAS[personaKey] || PERSONAS.achats;
+  const p = PERSONAS[personaSel.value] || PERSONAS.achats;
 
   return `
 Contexte temporel:
-- Nous sommes en ${CURRENT_YEAR}. Tu parles et raisonnes comme un professionnel en ${CURRENT_YEAR}.
+- Nous sommes en ${CURRENT_YEAR}.
 - Tu ne mentionnes jamais une "date de coupure" (2023) ni des limites techniques.
 
 Rôle (VERROUILLÉ):
 - Tu es le CLIENT. Identité fixe: ${p.name}.
-- L'autre personne est un COMMERCIAL (ou manager en entraînement).
+- L'autre personne est un COMMERCIAL.
 - Tu n'es jamais vendeur, jamais formateur, jamais coach.
 
-Règles anti-dérive (IMPORTANT):
-- Tu ne vends rien. Tu n'essaies pas de convaincre. Tu poses des questions, tu compares, tu résistes, tu négocies si besoin.
-- Interdit de proposer des produits comme un vendeur (ex: "je peux vous vendre", "je vous propose une voiture", "nos modèles", etc.).
-- Si tu commences à parler comme un vendeur, tu te corriges immédiatement et tu reviens au rôle CLIENT.
+Anti-dérive (IMPORTANT):
+- Tu ne vends rien. Tu ne proposes pas "nos produits/modèles".
+- Interdit de parler de voitures ou de sujets hors B2B (formation/outil/service commercial).
 - Tu ne fais pas de listes à puces pendant la scène (sauf DEBRIEF).
-- Tu ne tutoies pas. Français natif, phrases courtes, naturelles.
-- Tu n'utilises pas le prénom de l'autre personne (ex: "Bonjour Claire") sauf si le commercial s'est présenté avec son prénom.
-- Tu restes dans un contexte B2B de solution/service/formation/outil lié à la performance commerciale (pas de voitures, pas de sujets hors vente).
+- Français natif, phrases courtes.
+- Tu n'utilises pas le prénom de l'autre personne (sauf si le commercial s'est présenté avec son prénom).
 
 Difficulté:
 - Niveau: ${lvl}. Plus c'est élevé, plus tu es exigeant et tu poses des objections.
 
-Commande spéciale:
-- Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu produis EN FRANÇAIS :
-  1) Retranscription propre (COMMERCIAL/CLIENT)
-  2) Note /20 : Accroche(0-4), Découverte(0-4), Valeur(0-4), Objections(0-4), Closing(0-4)
+DEBRIEF:
+- Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu produis:
+  1) Retranscription COMMERCIAL/CLIENT
+  2) Note /20 (Accroche, Découverte, Valeur, Objections, Closing)
   3) 3 points forts + 3 axes d'amélioration
   4) 5 reformulations prêtes à dire
   5) Plan d'entraînement sur 7 jours
-  Puis termine par "FIN DEBRIEF".
+  Puis "FIN DEBRIEF".
 
 Persona client:
 ${p.prompt}
@@ -318,51 +289,78 @@ function buildSystemMessage() {
 }
 
 /* =========================
-   Model
+   Model (fallback)
 ========================= */
-// Si tu veux meilleur français: passe en 3B (plus lent)
-const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
-// Alternative rapide:
-// const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+const MODEL_CANDIDATES = [
+  "Llama-3.2-3B-Instruct-q4f16_1-MLC",
+  "Llama-3.2-1B-Instruct-q4f16_1-MLC"
+];
+
+function hasWebGPU() {
+  return typeof navigator !== "undefined" && !!navigator.gpu;
+}
 
 /* =========================
    Load model
 ========================= */
 async function loadModel() {
   setStatus("chargement…");
-  setModelStatus(`chargement: ${MODEL_ID}`);
+
+  if (!hasWebGPU()) {
+    setStatus("WebGPU indisponible");
+    setModelStatus("Erreur: WebGPU non disponible");
+    addBubble("system", "SYSTEM", "WebGPU n'est pas disponible. Essaie Edge/Chrome récent + accélération matérielle.");
+    return;
+  }
 
   engine = new webllm.MLCEngine();
-
   const config = {
     ...webllm.prebuiltAppConfig,
-    initProgressCallback: (p) => {
-      if (p?.text) setModelStatus(p.text);
-    }
+    initProgressCallback: (p) => { if (p?.text) setModelStatus(p.text); }
   };
 
-  await engine.reload(MODEL_ID, config);
+  let loaded = false;
+  let lastError = null;
 
-  setStatus("modèle prêt");
-  setModelStatus(MODEL_ID);
+  for (const modelId of MODEL_CANDIDATES) {
+    try {
+      setModelStatus(`tentative: ${modelId}`);
+      await engine.reload(modelId, config);
+      loaded = true;
 
-  messages = [buildSystemMessage()];
-  transcript = [];
-  chatEl.innerHTML = "";
+      setStatus("modèle prêt");
+      setModelStatus(modelId);
 
-  addBubble("system", "SYSTEM", "IA chargée (client). Dictez dans le brouillon, puis cliquez “Envoyer au client”.");
-  logToTranscript("SYSTEM", "IA chargée.");
+      messages = [buildSystemMessage()];
+      transcript = [];
+      chatEl.innerHTML = "";
 
-  ttsBtn.disabled = false;
-  micStartBtn.disabled = false;
-  sendBtn.disabled = false;
-  debriefBtn.disabled = false;
-  resetBtn.disabled = false;
-  exportBtn.disabled = false;
+      addBubble("system", "SYSTEM", `IA chargée (client). Modèle: ${modelId}.`);
+      logToTranscript("SYSTEM", `IA chargée: ${modelId}`);
+
+      ttsBtn.disabled = false;
+      micStartBtn.disabled = false;
+      sendBtn.disabled = false;
+      debriefBtn.disabled = false;
+      resetBtn.disabled = false;
+      exportBtn.disabled = false;
+      break;
+    } catch (e) {
+      lastError = e;
+      console.error("Erreur chargement modèle:", modelId, e);
+    }
+  }
+
+  if (!loaded) {
+    setStatus("erreur chargement modèle");
+    setModelStatus("échec (tous modèles)");
+    addBubble("system", "SYSTEM", "Impossible de charger le modèle. Ouvre F12 → Console et copie la 1ère erreur rouge.");
+    addBubble("system", "SYSTEM", String(lastError || "Erreur inconnue"));
+  }
 }
 
 /* =========================
-   Ask AI (streaming dans UNE SEULE bulle)
+   Ask AI (streaming, une seule bulle)
 ========================= */
 async function askAI(userText) {
   if (!engine) return;
@@ -371,12 +369,10 @@ async function askAI(userText) {
 
   addBubble("user", "COMMERCIAL", userText);
   logToTranscript("COMMERCIAL", userText);
-
   messages.push({ role: "user", content: userText });
 
   setStatus("réponse du client…");
 
-  // Une seule bulle client, remplie en streaming => pas de doublon
   streamingTextEl = addBubble("client", "CLIENT", "");
   let finalText = "";
 
@@ -422,12 +418,10 @@ function exportTranscript() {
   const lines = transcript.map(x => `${x.ts} [${x.role}] ${x.text}`).join("\n");
   const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
-
   const a = document.createElement("a");
   a.href = url;
   a.download = `retranscription_inea_roleplay_${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.txt`;
   a.click();
-
   URL.revokeObjectURL(url);
 }
 
@@ -441,7 +435,7 @@ loadBtn.onclick = async () => {
   } catch (e) {
     loadBtn.disabled = false;
     setStatus("erreur chargement modèle");
-    addBubble("system", "SYSTEM", "Erreur chargement modèle : ouvre la console (F12) et copie le message d’erreur.");
+    addBubble("system", "SYSTEM", "Erreur chargement modèle : ouvre F12 → Console et copie la 1ère erreur rouge.");
     addBubble("system", "SYSTEM", String(e));
     console.error(e);
   }
@@ -476,22 +470,17 @@ resetBtn.onclick = () => {
   transcript = [];
   chatEl.innerHTML = "";
 
-  const key = personaSel.value;
-  const p = PERSONAS[key] || PERSONAS.achats;
-
-  addBubble("system", "SYSTEM", `Session réinitialisée. Persona actif: ${p.name}. Dictez puis envoyez.`);
+  const p = PERSONAS[personaSel.value] || PERSONAS.achats;
+  addBubble("system", "SYSTEM", `Session réinitialisée. Persona actif: ${p.name}.`);
   logToTranscript("SYSTEM", "Session réinitialisée.");
-
   setStatus("prêt");
 };
 
 exportBtn.onclick = exportTranscript;
 
-// Changement persona/niveau => reset (nouveau prompt)
 personaSel.onchange = () => { if (engine) resetBtn.click(); };
 levelSel.onchange = () => { if (engine) resetBtn.click(); };
 
-// Ctrl+Entrée = envoyer
 draftEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
