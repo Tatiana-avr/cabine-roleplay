@@ -3,122 +3,85 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cabine — Jeu de rôle vocal (Client IA)</title>
+  <title>INEA Conseil — Cabine de jeu de rôle vocal</title>
   <style>
     :root{
-      --bg:#0b1220;
-      --panel:#111a2e;
-      --panel2:#0f1730;
-      --card:#0f1b34;
-      --line:rgba(255,255,255,.10);
-      --text:rgba(255,255,255,.92);
-      --muted:rgba(255,255,255,.65);
-      --accent:#6ee7ff;
-      --good:#6ee7b7;
-      --warn:#fbbf24;
-      --danger:#fb7185;
-      --shadow: 0 10px 30px rgba(0,0,0,.35);
-      --radius: 18px;
+      --inea-red:#E30613;
+      --bg:#F4F5F7;
+      --panel:#FFFFFF;
+      --text:#1F2937;
+      --muted:#6B7280;
+      --line:#E5E7EB;
+      --shadow: 0 12px 30px rgba(0,0,0,.08);
+      --radius: 16px;
     }
 
     *{ box-sizing:border-box; }
     body{
       margin:0;
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
-      background: radial-gradient(1200px 700px at 20% 0%, #172554 0%, var(--bg) 55%, #060a14 100%);
+      background: linear-gradient(180deg, #FFFFFF 0%, var(--bg) 100%);
       color: var(--text);
     }
 
-    .wrap{
-      max-width: 1100px;
-      margin: 24px auto;
-      padding: 0 14px 24px;
-    }
+    .wrap{ max-width: 1100px; margin: 26px auto; padding: 0 14px 26px; }
 
     header{
-      display:flex;
-      align-items:flex-start;
-      justify-content:space-between;
-      gap:14px;
-      margin-bottom: 14px;
+      display:flex; align-items:center; justify-content:space-between;
+      gap:14px; padding: 14px 16px;
+      background: var(--panel); border: 1px solid var(--line);
+      border-radius: var(--radius); box-shadow: var(--shadow);
     }
 
-    h1{
-      margin:0;
-      font-size: 22px;
-      letter-spacing:.2px;
-    }
-    .sub{
-      margin-top:6px;
-      color: var(--muted);
-      font-size: 13px;
-      line-height:1.35;
-    }
+    .brand{ display:flex; align-items:center; gap:12px; }
+    .brand img{ width:52px; height:52px; object-fit:contain; border-radius: 12px; }
+    .brand h1{ margin:0; font-size: 18px; }
+    .brand .sub{ margin-top:3px; color: var(--muted); font-size: 12.5px; line-height:1.35; }
 
-    .statusBar{
-      display:flex;
-      gap:8px;
-      flex-wrap:wrap;
-      justify-content:flex-end;
-    }
+    .statusBar{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
     .pill{
+      font-size: 12px; color: var(--muted);
       border: 1px solid var(--line);
-      background: rgba(255,255,255,.05);
-      padding: 7px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      color: var(--muted);
-      box-shadow: var(--shadow);
-      backdrop-filter: blur(8px);
+      background: #fff;
+      padding: 7px 10px; border-radius: 999px;
     }
+    .pill strong{ color: var(--text); font-weight: 700; }
 
     .grid{
       display:grid;
-      grid-template-columns: 1fr 360px;
+      grid-template-columns: 1fr 380px;
       gap: 14px;
+      margin-top: 14px;
     }
-
-    @media (max-width: 980px){
-      .grid{ grid-template-columns: 1fr; }
-    }
+    @media (max-width: 980px){ .grid{ grid-template-columns: 1fr; } }
 
     .card{
+      background: var(--panel);
       border: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.03) 100%);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
       overflow:hidden;
     }
-
     .cardHeader{
       padding: 12px 14px;
       border-bottom: 1px solid var(--line);
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap:10px;
-      background: rgba(255,255,255,.03);
+      display:flex; align-items:center; justify-content:space-between;
+      background: #fff;
     }
-
-    .cardHeader strong{
-      font-size: 13px;
-      letter-spacing:.2px;
-      color: rgba(255,255,255,.9);
-    }
+    .cardHeader strong{ font-size: 13px; }
+    .hint{ font-size: 12px; color: var(--muted); }
 
     .chat{
-      height: 560px;
+      height: 580px;
       overflow:auto;
       padding: 14px;
-      background:
-        radial-gradient(900px 500px at 80% 0%, rgba(110,231,255,.10) 0%, rgba(0,0,0,0) 55%),
-        rgba(0,0,0,.18);
+      background: #FAFAFA;
     }
 
     .bubble{
-      max-width: 82%;
+      max-width: 85%;
       padding: 10px 12px;
-      border-radius: 16px;
+      border-radius: 14px;
       border: 1px solid var(--line);
       margin: 10px 0;
       line-height: 1.35;
@@ -130,121 +93,105 @@
       font-size: 11px;
       color: var(--muted);
       margin-bottom: 6px;
-      display:flex;
-      gap:8px;
-      align-items:center;
     }
     .bubble.client{
-      background: rgba(110,231,255,.08);
-      border-color: rgba(110,231,255,.22);
+      background: rgba(227, 6, 19, .06);
+      border-color: rgba(227, 6, 19, .20);
       margin-right:auto;
     }
     .bubble.user{
-      background: rgba(110,231,183,.08);
-      border-color: rgba(110,231,183,.22);
+      background: rgba(31, 41, 55, .05);
       margin-left:auto;
     }
     .bubble.system{
       max-width: 100%;
-      background: rgba(255,255,255,.05);
+      background: #fff;
       margin-left:auto;
       margin-right:auto;
+      border-left: 4px solid var(--inea-red);
     }
 
-    .panelBody{
-      padding: 14px;
-      display:flex;
-      flex-direction:column;
-      gap: 12px;
-    }
+    .panelBody{ padding: 14px; display:flex; flex-direction:column; gap: 12px; }
+    label{ font-size: 12px; color: var(--muted); }
 
-    label{
-      font-size: 12px;
-      color: var(--muted);
-    }
-
-    select, textarea, input{
+    select, textarea{
       width:100%;
       border-radius: 14px;
       border: 1px solid var(--line);
-      background: rgba(0,0,0,.25);
+      background: #fff;
       color: var(--text);
       padding: 10px 12px;
       outline: none;
     }
+    textarea{ min-height: 120px; resize: vertical; }
 
-    textarea{
-      min-height: 110px;
-      resize: vertical;
-      line-height: 1.35;
-      font-size: 14px;
-    }
-
-    .row{
-      display:flex;
-      gap:10px;
-      flex-wrap:wrap;
-    }
+    .row{ display:flex; gap:10px; flex-wrap:wrap; }
 
     .btn{
       border: 1px solid var(--line);
-      background: rgba(255,255,255,.06);
+      background: #fff;
       color: var(--text);
       padding: 10px 12px;
       border-radius: 14px;
       cursor:pointer;
-      font-weight: 600;
+      font-weight: 700;
       font-size: 13px;
-      transition: transform .06s ease, background .2s ease;
+      transition: transform .06s ease, border-color .2s ease, background .2s ease;
       user-select:none;
     }
-    .btn:hover{ background: rgba(255,255,255,.10); }
+    .btn:hover{ border-color: #D1D5DB; }
     .btn:active{ transform: translateY(1px); }
     .btn:disabled{ opacity: .55; cursor:not-allowed; }
 
-    .btnPrimary{ border-color: rgba(110,231,255,.35); background: rgba(110,231,255,.12); }
-    .btnGood{ border-color: rgba(110,231,183,.35); background: rgba(110,231,183,.12); }
-    .btnWarn{ border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.12); }
-    .btnDanger{ border-color: rgba(251,113,133,.35); background: rgba(251,113,133,.12); }
-
-    .tiny{
-      font-size: 12px;
+    .primary{
+      border-color: rgba(227,6,19,.35);
+      background: rgba(227,6,19,.08);
+    }
+    .primary:hover{ background: rgba(227,6,19,.12); }
+    .danger{
+      border-color: rgba(227,6,19,.35);
+      background: rgba(227,6,19,.10);
+      color: #7F1D1D;
+    }
+    .mutedBox{
+      border: 1px dashed var(--line);
+      border-radius: 14px;
+      padding: 10px 12px;
       color: var(--muted);
-      line-height:1.35;
+      font-size: 12px;
+      line-height: 1.35;
+      background: #fff;
     }
-
-    .divider{
-      height:1px;
-      background: var(--line);
-      margin: 6px 0;
-    }
-
     .kbd{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
       font-size: 11px;
-      color: rgba(255,255,255,.75);
       border: 1px solid var(--line);
       padding: 2px 6px;
       border-radius: 8px;
-      background: rgba(255,255,255,.06);
+      background: #fff;
     }
   </style>
 </head>
+
 <body>
   <div class="wrap">
     <header>
-      <div>
-        <h1>Cabine de jeu de rôle vocal — Client IA</h1>
-        <div class="sub">
-          Mode <b>dictée</b> : tu peux te taire, réfléchir, reprendre, puis cliquer <b>Envoyer au client</b> quand tu es prêt.
-          <br/>Conseillé : Chrome ou Edge (micro + WebGPU).
+      <div class="brand">
+        <img src="./inea-logo.png" alt="INEA Conseil logo" />
+        <div>
+          <h1>Cabine de jeu de rôle vocal — Client IA</h1>
+          <div class="sub">
+            Mode dictée : tu peux te taire, réfléchir, reprendre, puis cliquer <strong>Envoyer</strong>.
+            <br/>Conseillé : Chrome ou Edge.
+          </div>
         </div>
       </div>
+
       <div class="statusBar">
-        <div class="pill" id="status">Status: prêt</div>
-        <div class="pill" id="modelStatus">Modèle: non chargé</div>
-        <div class="pill" id="micStatus">Micro: en attente</div>
-        <div class="pill" id="voiceStatus">Voix: non détectée</div>
+        <div class="pill" id="status"><strong>Status</strong>: prêt</div>
+        <div class="pill" id="modelStatus"><strong>Modèle</strong>: non chargé</div>
+        <div class="pill" id="micStatus"><strong>Micro</strong>: en attente</div>
+        <div class="pill" id="voiceStatus"><strong>Voix</strong>: non détectée</div>
       </div>
     </header>
 
@@ -253,7 +200,7 @@
       <div class="card">
         <div class="cardHeader">
           <strong>Conversation</strong>
-          <div class="tiny">Streaming activé (texte du client en direct)</div>
+          <div class="hint">Streaming activé (le texte du client se remplit en direct)</div>
         </div>
         <div class="chat" id="chat"></div>
       </div>
@@ -262,7 +209,7 @@
       <div class="card">
         <div class="cardHeader">
           <strong>Contrôles</strong>
-          <div class="tiny">Raccourci : <span class="kbd">Ctrl</span> + <span class="kbd">Enter</span> pour envoyer</div>
+          <div class="hint"><span class="kbd">Ctrl</span> + <span class="kbd">Entrée</span> = envoyer</div>
         </div>
 
         <div class="panelBody">
@@ -285,39 +232,39 @@
           </div>
 
           <div class="row">
-            <button class="btn btnPrimary" id="loadBtn">⬇️ Charger l’IA</button>
+            <button class="btn primary" id="loadBtn">Charger l’IA</button>
             <button class="btn" id="ttsBtn" disabled>🔊 Voix ON</button>
           </div>
 
-          <div class="divider"></div>
+          <div class="mutedBox">
+            1) Clique <strong>Charger l’IA</strong> (1ère fois : téléchargement).<br/>
+            2) Clique <strong>Démarrer l’écoute</strong> pour dicter.<br/>
+            3) Clique <strong>Envoyer</strong> quand tu es prêt.
+          </div>
 
           <div>
-            <label>Brouillon (dictée micro + corrections)</label>
-            <textarea id="draft" placeholder="Clique “Démarrer l’écoute”, parle, puis corrige ici si besoin. Quand tu es prêt, clique “Envoyer au client”."></textarea>
-            <div class="tiny">Astuce : si la dictée coupe, elle redémarre automatiquement. Rien n’est envoyé tant que tu ne cliques pas “Envoyer”.</div>
+            <label>Brouillon (dictée + corrections)</label>
+            <textarea id="draft" placeholder="Dicte ici via micro, puis corrige si besoin. Rien n’est envoyé automatiquement."></textarea>
           </div>
 
           <div class="row">
-            <button class="btn btnGood" id="micStart" disabled>🎤 Démarrer l’écoute</button>
+            <button class="btn" id="micStart" disabled>🎤 Démarrer l’écoute</button>
             <button class="btn" id="micStop" disabled>⏹ Stop micro</button>
           </div>
 
           <div class="row">
-            <button class="btn btnGood" id="sendBtn" disabled>➡️ Envoyer au client</button>
-            <button class="btn btnWarn" id="debriefBtn" disabled>🧾 DEBRIEF</button>
+            <button class="btn primary" id="sendBtn" disabled>➡️ Envoyer au client</button>
+            <button class="btn" id="debriefBtn" disabled>🧾 DEBRIEF</button>
           </div>
 
           <div class="row">
-            <button class="btn" id="resetBtn" disabled>🗑 Reset</button>
-            <button class="btn" id="exportBtn" disabled>⬇️ Télécharger retranscription</button>
-          </div>
-
-          <div class="tiny">
-            <b>Important :</b> 1ère fois, le modèle se télécharge (normal). Ensuite c’est plus rapide.
+            <button class="btn danger" id="resetBtn" disabled>🗑 Reset</button>
+            <button class="btn" id="exportBtn" disabled>⬇️ Télécharger la retranscription</button>
           </div>
         </div>
       </div>
     </div>
+
   </div>
 
   <script type="module" src="./app.js"></script>
