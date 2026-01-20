@@ -1,4 +1,9 @@
-// ✅ Version robuste : MLCEngine + prebuiltAppConfig (évite les erreurs "chargement modèle")
+// app.js — Version complète avec contexte temporel 2026 (et anti “bloqué en 2023”)
+// + dictée micro (rien n’est envoyé automatiquement)
+// + streaming dans une seule bulle (pas de doublon)
+// + export retranscription
+// + TTS améliorée (nettoyage texte avant lecture)
+
 import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
 /* =========================
@@ -43,20 +48,20 @@ let streamingTextEl = null;
 /* =========================
    UI helpers
 ========================= */
-function setStatus(txt){ statusEl.textContent = `Status: ${txt}`; }
-function setModelStatus(txt){ modelStatusEl.textContent = `Modèle: ${txt}`; }
-function setMicStatus(txt){ micStatusEl.textContent = `Micro: ${txt}`; }
-function setVoiceStatus(txt){ voiceStatusEl.textContent = `Voix: ${txt}`; }
+function setStatus(txt) { statusEl.textContent = `Status: ${txt}`; }
+function setModelStatus(txt) { modelStatusEl.textContent = `Modèle: ${txt}`; }
+function setMicStatus(txt) { micStatusEl.textContent = `Micro: ${txt}`; }
+function setVoiceStatus(txt) { voiceStatusEl.textContent = `Voix: ${txt}`; }
 
-function scrollChat(){ chatEl.scrollTop = chatEl.scrollHeight; }
+function scrollChat() { chatEl.scrollTop = chatEl.scrollHeight; }
 
-function nowStamp(){
-  return new Date().toLocaleTimeString("fr-FR", {hour:"2-digit", minute:"2-digit"});
+function nowStamp() {
+  return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
-function addBubble(role, who, text){
+function addBubble(roleClass, who, text) {
   const bubble = document.createElement("div");
-  bubble.className = `bubble ${role}`;
+  bubble.className = `bubble ${roleClass}`;
 
   const meta = document.createElement("div");
   meta.className = "meta";
@@ -71,39 +76,67 @@ function addBubble(role, who, text){
   chatEl.appendChild(bubble);
   scrollChat();
 
-  return body; // on renvoie le node texte (utile pour streaming)
+  return body; // pour streaming
 }
 
-function logToTranscript(role, text){
+function logToTranscript(role, text) {
   transcript.push({ ts: new Date().toISOString(), role, text });
 }
 
 /* =========================
-   TTS (speech synthesis)
+   TTS (speech synthesis) + amélioration lecture
 ========================= */
-function pickBestVoice(){
+function pickBestVoice() {
   const voices = window.speechSynthesis.getVoices() || [];
   if (!voices.length) { setVoiceStatus("pas de voix"); return; }
 
+  // Priorité : voix FR, et si possible voix Microsoft/Siri/Google
   const preferred = voices.filter(v =>
     v.lang?.toLowerCase().startsWith("fr") &&
-    /natural|neural|siri|microsoft|google/i.test(v.name)
+    /microsoft|siri|google|denise|henri|paul|julie|natural|neural/i.test(v.name)
   );
 
   bestVoice =
     preferred[0] ||
     voices.find(v => v.lang?.toLowerCase().startsWith("fr")) ||
-    voices[0] || null;
+    voices[0] ||
+    null;
 
   setVoiceStatus(bestVoice ? `${bestVoice.name} (${bestVoice.lang})` : "non sélectionnée");
 }
 window.speechSynthesis.onvoiceschanged = pickBestVoice;
 pickBestVoice();
 
-function speak(text){
+function normalizeForTTS(text) {
+  let t = text || "";
+
+  // retours ligne => pauses
+  t = t.replace(/\n+/g, ". ");
+
+  // acronymes & termes fréquents (prononciation)
+  t = t.replace(/\bIA\b/g, "i a");
+  t = t.replace(/\bB2B\b/g, "bé to bé");
+  t = t.replace(/\bCPF\b/g, "cé pé èf");
+  t = t.replace(/\bKPI\b/g, "ké pi aï");
+  t = t.replace(/\bROI\b/g, "retour sur investissement");
+
+  // monnaies / %
+  t = t.replace(/(\d+)\s*€/g, "$1 euros");
+  t = t.replace(/(\d+)\s*%/g, "$1 pour cent");
+
+  // parenthèses et crochets perturbants
+  t = t.replace(/[()[\]{}]/g, " ");
+  t = t.replace(/\s{2,}/g, " ").trim();
+
+  return t;
+}
+
+function speak(text) {
   if (!ttsEnabled) return;
+  const cleaned = normalizeForTTS(text);
+
   window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
+  const u = new SpeechSynthesisUtterance(cleaned);
   u.lang = "fr-FR";
   if (bestVoice) u.voice = bestVoice;
   u.rate = 1.02;
@@ -112,7 +145,7 @@ function speak(text){
 }
 
 /* =========================
-   STT (speech recognition) => dictée
+   STT (speech recognition) => dictée (n’envoie rien automatiquement)
 ========================= */
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const rec = SpeechRecognition ? new SpeechRecognition() : null;
@@ -126,7 +159,7 @@ if (rec) {
   setMicStatus("non supporté (Chrome/Edge)");
 }
 
-function startListening(){
+function startListening() {
   if (!rec) {
     alert("Reconnaissance vocale non supportée. Essaie Chrome ou Edge.");
     return;
@@ -137,10 +170,10 @@ function startListening(){
   micStartBtn.disabled = true;
   micStopBtn.disabled = false;
 
-  try { rec.start(); } catch (_) {}
+  try { rec.start(); } catch (_) { /* déjà démarré */ }
 }
 
-function stopListening(){
+function stopListening() {
   if (!rec) return;
   suppressMicRestart = true;
   isListening = false;
@@ -161,6 +194,7 @@ if (rec) {
     chunk = (chunk || "").trim();
     if (!chunk) return;
 
+    // Ajout au brouillon (dictée), sans envoi auto
     draftEl.value = (draftEl.value ? (draftEl.value + " ") : "") + chunk;
     draftEl.focus();
   };
@@ -173,6 +207,7 @@ if (rec) {
   };
 
   rec.onend = () => {
+    // relance automatique si coupure pendant dictée
     if (isListening && !suppressMicRestart) {
       try { rec.start(); } catch (_) {}
     } else {
@@ -182,81 +217,101 @@ if (rec) {
 }
 
 /* =========================
-   Persona prompt
+   Prompt SYSTEM (avec contexte 2026)
 ========================= */
-function personaText(){
+function personaText() {
   const lvl = levelSel.value;
 
-  const base = `
-Tu es STRICTEMENT un client dans un jeu de rôle commercial.
+  // Tu peux forcer 2026 ici si tu veux strictement 2026 :
+  const CURRENT_YEAR = 2026;
+
+  const baseContext = `
+Contexte temporel (IMPORTANT) :
+- Nous sommes en ${CURRENT_YEAR}.
+- Tu te comportes comme une personne réelle vivant en ${CURRENT_YEAR}.
+- Tu ne mentionnes JAMAIS ton année d'entraînement, tes limites techniques, ni des phrases du type :
+  "je n'ai pas accès aux infos après 2023", "mon entraînement s'arrête en 2023", "je ne peux pas savoir".
+- Si une information très précise te manque, tu réponds comme un professionnel en ${CURRENT_YEAR} :
+  tu poses une question, ou tu fais une hypothèse raisonnable, sans parler de "coupure".
+`.trim();
+
+  const rules = `
+Tu es STRICTEMENT un client (B2B) dans un jeu de rôle commercial.
 Règles absolues :
-- Tu restes client à 100%. Tu ne dis jamais que tu es une IA.
-- Style oral : phrases courtes, naturelles, crédibles.
-- Tu poses des questions + objections réalistes.
-- Tu ne coaches PAS pendant la scène.
+- Tu restes client à 100%. Tu n'es pas un assistant. Tu n'es pas un coach. Tu ne dis jamais que tu es une IA.
+- Style oral : français natif (France), phrases courtes, naturelles, crédibles.
+- Zéro anglicisme : évite "ROI", "pipeline", "deal", "call". Dis "retour sur investissement", "opportunités", "affaire", "appel".
+- Tu ne fais pas de listes à puces à l’oral (sauf en mode DEBRIEF).
 - Tu ne donnes pas toutes les infos d'un coup : attends les bonnes questions.
+- Si le commercial te demande "quoi dire" / "comment vendre", tu refuses et tu restes client : "C'est à vous de me convaincre."
+- Tu réponds en 2 à 5 phrases maximum (sauf DEBRIEF).
+- Niveau de difficulté : ${lvl}.
+
+Commande spéciale :
 - Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu produis EN FRANÇAIS :
   1) Retranscription propre (dialogue COMMERCIAL/CLIENT)
   2) Note /20 : Accroche(0-4), Découverte(0-4), Valeur(0-4), Objections(0-4), Closing(0-4)
   3) 3 points forts + 3 axes d'amélioration
   4) 5 reformulations prêtes à dire
   5) Plan d'entraînement sur 7 jours
-Puis termine par "FIN DEBRIEF".
-Niveau: ${lvl}.
+  Puis tu termines par "FIN DEBRIEF".
 `.trim();
 
- const personas = {
-  achats: `
-Persona client: Claire Martin
-- Rôle: acheteuse / responsable achats (B2B)
-- Situation: tu compares plusieurs prestataires. Tu veux une réponse claire et chiffrée.
-- Objectif (caché): obtenir un prix et des conditions sans trop t'engager.
-- Attitude: polie, méfiante, factuelle, pressée.
-- Contraintes: budget limité, tu dois justifier ton choix en interne.
-- Objections obligatoires à placer: "on a déjà un fournisseur", "c'est cher", "prouvez-moi la valeur".
-- Informations à ne donner que si on te questionne bien: budget, calendrier, critères de décision, décideurs.
+  // Personas “clients” (B2B) — adapte si tu as déjà changé index.html
+  const personas = {
+    sophie: `
+Persona client : Claire Martin
+- Poste : Responsable Achats (B2B)
+- Situation : tu compares 2 à 3 prestataires. Tu veux du concret.
+- Objectif (caché) : obtenir un prix et des conditions sans trop t'engager.
+- Attitude : polie, sceptique, factuelle, pressée.
+- Contraintes : budget limité, validation interne.
+- Objections obligatoires : "on a déjà un fournisseur", "c'est cher", "prouvez-moi la valeur".
+- Infos à dévoiler seulement si on te questionne bien : budget, calendrier, décideurs, critères de choix.
 `.trim(),
 
-  ops: `
-Persona client: Sophia Dupont
-- Rôle: directrice opérationnelle (B2B)
-- Situation: problème concret (retards / qualité / organisation). Tu es sollicité mais tu n'as que 10 minutes.
-- Objectif: vérifier si le commercial comprend ton problème et propose une démarche simple.
-- Attitude: direct, impatient, coupe parfois la parole.
-- Objections obligatoires: "je n'ai pas le temps", "on a déjà essayé", "ça va être compliqué à déployer".
-- Informations à dévoiler progressivement: symptômes du problème, impact, urgences, parties prenantes.
+    marc: `
+Persona client : Sophia Dupont
+- Poste : Directrice opérationnelle / exploitation (B2B)
+- Situation : problème concret urgent. Tu as 10 minutes.
+- Objectif : vérifier si le commercial comprend vraiment le problème et propose une démarche simple.
+- Attitude : direct, impatient, coupe parfois la parole.
+- Objections obligatoires : "je n'ai pas le temps", "on a déjà essayé", "c'est compliqué à déployer".
+- Infos à dévoiler progressivement : impact, urgence, parties prenantes, contraintes terrain.
 `.trim(),
 
-  daf: `
-Persona client: Élodie Roux
-- Rôle: directrice financière (B2B), validation budgétaire
-- Situation: tu dois challenger une dépense. Tu veux des garanties.
-- Objectif: réduire le risque et obtenir des conditions favorables.
-- Attitude: froide, logique, orientée chiffres.
-- Objections obligatoires: "retour sur investissement", "coût total", "engagement/clauses", "conformité/RGPD".
-- Points à tester: conditions de paiement, réversibilité, pénalités, preuves (cas clients).
+    colere: `
+Persona client : Élodie Roux
+- Poste : Directrice financière (validation budgétaire)
+- Situation : tu dois challenger une dépense et limiter les risques.
+- Objectif : réduire le prix / obtenir des garanties contractuelles.
+- Attitude : froide, logique, orientée chiffres.
+- Objections obligatoires : "retour sur investissement", "coût total", "engagement/clauses", "conformité/RGPD".
+- Points à tester : conditions de paiement, réversibilité, pénalités, preuves (cas clients).
 `.trim()
-};
+  };
 
+  const personaKey = personaSel.value;
+  const personaBlock = personas[personaKey] || Object.values(personas)[0];
 
-  return `${base}\n\n${personas[personaSel.value]}`;
+  return `${baseContext}\n\n${rules}\n\n${personaBlock}`;
 }
 
-function buildSystem(){
+function buildSystem() {
   return { role: "system", content: personaText() };
 }
 
 /* =========================
    Model
-   ✅ On met un modèle "low resource" et plus rapide.
-   Tu peux repasser en 3B si les PC sont puissants.
 ========================= */
-const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+// Si tu veux meilleure qualité FR : "Llama-3.2-3B-Instruct-q4f16_1-MLC" (plus lent)
+// Ici on garde le modèle rapide. Tu peux changer en 3B si besoin.
+const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
 
 /* =========================
    Load model (robuste)
 ========================= */
-async function loadModel(){
+async function loadModel() {
   setStatus("chargement…");
   setModelStatus(`chargement: ${MODEL_ID}`);
 
@@ -292,41 +347,42 @@ async function loadModel(){
 /* =========================
    Ask AI (streaming dans UNE SEULE bulle)
 ========================= */
-async function askAI(userText){
+async function askAI(userText) {
   if (!engine) return;
 
+  // Stop TTS pour éviter écho
   window.speechSynthesis.cancel();
 
+  // Afficher la phrase du commercial
   addBubble("user", "COMMERCIAL", userText);
   logToTranscript("COMMERCIAL", userText);
 
-  messages.push({ role:"user", content:userText });
+  messages.push({ role: "user", content: userText });
 
   setStatus("réponse du client…");
 
   streamingTextEl = addBubble("client", "CLIENT", "");
   let finalText = "";
 
-  try{
+  try {
     const stream = await engine.chat.completions.create({
       messages,
       temperature: 0.7,
-      max_tokens: 260,
+      max_tokens: 240,
       stream: true
     });
 
-    for await (const chunk of stream){
+    for await (const chunk of stream) {
       const delta = chunk?.choices?.[0]?.delta?.content || "";
       if (!delta) continue;
       finalText += delta;
       streamingTextEl.textContent = finalText;
       scrollChat();
     }
-
-  } catch(e){
-    streamingTextEl.textContent = "Erreur: chargement/réponse impossible. Réessaie.";
+  } catch (e) {
+    streamingTextEl.textContent = "Erreur: réponse impossible. Réessaie.";
     setStatus("erreur");
-    messages.push({ role:"assistant", content:"(erreur)" });
+    messages.push({ role: "assistant", content: "(erreur)" });
     logToTranscript("CLIENT", "(erreur)");
     streamingTextEl = null;
     return;
@@ -336,7 +392,7 @@ async function askAI(userText){
   streamingTextEl.textContent = finalText;
   streamingTextEl = null;
 
-  messages.push({ role:"assistant", content: finalText });
+  messages.push({ role: "assistant", content: finalText });
   logToTranscript("CLIENT", finalText);
 
   speak(finalText);
@@ -344,16 +400,18 @@ async function askAI(userText){
 }
 
 /* =========================
-   Export
+   Export transcript
 ========================= */
-function exportTranscript(){
+function exportTranscript() {
   const lines = transcript.map(x => `${x.ts} [${x.role}] ${x.text}`).join("\n");
-  const blob = new Blob([lines], { type:"text/plain;charset=utf-8" });
+  const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
+
   const a = document.createElement("a");
   a.href = url;
-  a.download = `retranscription_roleplay_${new Date().toISOString().slice(0,19).replaceAll(":","-")}.txt`;
+  a.download = `retranscription_roleplay_${new Date().toISOString().slice(0, 19).replaceAll(":", "-")}.txt`;
   a.click();
+
   URL.revokeObjectURL(url);
 }
 
@@ -362,8 +420,9 @@ function exportTranscript(){
 ========================= */
 loadBtn.onclick = async () => {
   loadBtn.disabled = true;
-  try { await loadModel(); }
-  catch(e){
+  try {
+    await loadModel();
+  } catch (e) {
     loadBtn.disabled = false;
     setStatus("erreur chargement modèle");
     addBubble("system", "SYSTEM", "Erreur chargement modèle : ouvre la console (F12) et copie le message d’erreur.");
@@ -400,16 +459,20 @@ resetBtn.onclick = () => {
   messages = [buildSystem()];
   transcript = [];
   chatEl.innerHTML = "";
-  addBubble("system", "SYSTEM", "Session réinitialisée. Persona actif. Dicte puis envoie.");
+
+  addBubble("system", "SYSTEM", "Session réinitialisée. Persona actif (contexte 2026). Dicte puis envoie.");
   logToTranscript("SYSTEM", "Session réinitialisée.");
+
   setStatus("prêt");
 };
 
 exportBtn.onclick = exportTranscript;
 
+// Si persona/niveau change => reset (et donc prompt avec 2026 + nouvelles règles)
 personaSel.onchange = () => { if (engine) resetBtn.click(); };
 levelSel.onchange = () => { if (engine) resetBtn.click(); };
 
+// Raccourci Ctrl+Entrée = envoyer
 draftEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
