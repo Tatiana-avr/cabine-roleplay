@@ -1,3 +1,12 @@
+// app.js — INEA Conseil — Simulation d’appel client IA (vocal d’abord, texte ensuite)
+// ✅ Mode appel : le client PARLE d’abord, la retranscription s’affiche APRÈS
+// ✅ Verrou CLIENT (anti “je suis vendeur” / anti hors-sujet)
+// ✅ Anti-prénoms (ne t’appelle jamais “Claire” + nettoyage automatique)
+// ✅ Année actuelle (automatique) + règle “nous sommes en 2026” si tu veux la fixer
+// ✅ Micro dictée (tu peux parler, réfléchir, reprendre, puis envoyer)
+// ✅ Export retranscription
+// ✅ Fallback modèles : 3B puis 1B si la machine ne tient pas
+
 import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
 /* =========================
@@ -13,8 +22,8 @@ const voiceStatusEl = document.getElementById("voiceStatus");
 const loadBtn = document.getElementById("loadBtn");
 const ttsBtn = document.getElementById("ttsBtn");
 
-const personaSel = document.getElementById("persona");
-const levelSel = document.getElementById("level");
+const personaSel = document.getElementById("persona"); // values: achats / ops / daf
+const levelSel = document.getElementById("level");     // facile / moyen / expert
 
 const draftEl = document.getElementById("draft");
 const micStartBtn = document.getElementById("micStart");
@@ -36,6 +45,12 @@ let bestVoice = null;
 
 let isListening = false;
 let suppressMicRestart = false;
+
+/* =========================
+   Time (current year)
+   - Si tu veux FORCER 2026, remplace la ligne par: const CURRENT_YEAR = 2026;
+========================= */
+const CURRENT_YEAR = new Date().getFullYear();
 
 /* =========================
    UI helpers
@@ -74,7 +89,7 @@ function logToTranscript(role, text) {
 }
 
 /* =========================
-   TTS
+   TTS (speech synthesis)
 ========================= */
 function pickBestVoice() {
   const voices = window.speechSynthesis.getVoices() || [];
@@ -135,7 +150,7 @@ function waitForSpeechEnd() {
 }
 
 /* =========================
-   STT (dictée)
+   STT (dictée) — rien n’est envoyé automatiquement
 ========================= */
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const rec = SpeechRecognition ? new SpeechRecognition() : null;
@@ -199,50 +214,93 @@ if (rec) {
 }
 
 /* =========================
-   Personas (match index.html: achats / ops / daf)
+   PERSONAS (match index.html: achats / ops / daf)
+   IMPORTANT: on NE DONNE PAS de prénom au modèle => anti “Bonjour Claire”
 ========================= */
 const PERSONAS = {
   achats: {
-    name: "Claire Martin",
+    label: "Responsable Achats",
     prompt: `
 Identité:
-- Tu es Responsable Achats (B2B). Tu ne donnes pas ton prénom spontanément.
+- Tu es Responsable Achats (B2B).
+- Tu ne donnes pas ton prénom.
 Contexte:
-- Tu compares 2 à 3 prestataires (formation/outils d'entraînement commercial).
+- Tu compares 2 à 3 prestataires (formation, accompagnement, outils d'entraînement commercial).
 Comportement:
-- Polie, sceptique, factuelle.
-- Objections: "on a déjà un fournisseur", "c'est cher", "prouvez-moi la valeur".
-- Tu révèles budget/décideurs/calendrier seulement si on te questionne bien.
+- Polie, sceptique, factuelle, orientée contrat et conditions.
+- Objections obligatoires: "on a déjà un fournisseur", "c'est cher", "prouvez-moi la valeur".
+- Tu révèles budget / décideurs / calendrier uniquement si on te questionne correctement.
 `.trim()
   },
+
   ops: {
-    name: "Sophia Dupont",
+    label: "Directrice des opérations",
     prompt: `
 Identité:
-- Tu es Directrice des opérations (B2B). Tu ne donnes pas ton prénom spontanément.
+- Tu es Directrice des opérations (B2B).
+- Tu ne donnes pas ton prénom.
 Contexte:
-- Problème: RDV irréguliers, discours terrain hétérogène, adoption faible.
+- Problème terrain: qualité irrégulière des rendez-vous, discours hétérogène, adoption faible des pratiques.
 Comportement:
-- Directe, pressée.
-- Objections: "je n'ai pas le temps", "on a déjà essayé", "compliqué à déployer".
+- Directe, pressée, pragmatique.
+- Objections obligatoires: "je n'ai pas le temps", "on a déjà essayé", "ça va être compliqué à déployer".
+- Tu veux: démarche simple, déploiement léger, résultats observables.
 `.trim()
   },
+
   daf: {
-    name: "Élodie Roux",
+    label: "Directrice financière",
     prompt: `
 Identité:
-- Tu es Directrice financière (B2B). Tu ne donnes pas ton prénom spontanément.
+- Tu es Directrice financière (B2B).
+- Tu ne donnes pas ton prénom.
 Contexte:
 - Tu valides un budget et limites le risque.
 Comportement:
-- Froide, logique, orientée chiffres.
-- Objections: "retour sur investissement", "coût total", "engagement/clauses", "conformité/RGPD".
+- Froide, logique, orientée chiffres et conformité.
+- Objections obligatoires: "retour sur investissement", "coût total", "engagement/clauses", "conformité/RGPD".
 `.trim()
   }
 };
 
 /* =========================
-   System prompt (CLIENT verrouillé + 2026)
+   HARD VERROUS (post-traitement)
+   1) Anti-prénoms (supprime “Bonjour Claire”, etc.)
+   2) Anti-vendeur (si ça ressemble à un vendeur, on recadre)
+========================= */
+function sanitizeClientText(text) {
+  let t = (text || "").trim();
+
+  // Supprime un "Bonjour + Prénom" au début (Bonjour Claire / Bonsoir Paul / Salut Sophie, etc.)
+  // => "Bonjour. ..."
+  t = t.replace(
+    /^(bonjour|bonsoir|salut)\s*,?\s*[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ-]+(\s+[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ-]+)?\s*!?\s*/i,
+    "$1. "
+  );
+
+  // Supprime occurrences "Claire" (au cas où)
+  t = t.replace(/\bClaire\b/gi, "");
+
+  // Nettoyage espaces
+  t = t.replace(/\s{2,}/g, " ").trim();
+  return t;
+}
+
+function looksLikeSeller(text) {
+  // Indices fréquents de dérive vendeur/catalogue
+  return /(je vous propose|nous proposons|nos (offres|modèles|solutions)|je peux vous vendre|prix de vente|modèle de\s+\d{4}|voiture|mercedes)/i.test(text);
+}
+
+function forceClientRecovery() {
+  return [
+    "Pardon, je reformule en tant que cliente.",
+    "Je cherche surtout à comprendre ce que vous pouvez m’apporter concrètement.",
+    "Pouvez-vous m’expliquer votre approche, ce qui vous différencie, et comment on déploie ça sans complexifier le quotidien ?"
+  ].join(" ");
+}
+
+/* =========================
+   SYSTEM PROMPT (verrou CLIENT + année actuelle + mode appel)
 ========================= */
 function buildSystemPrompt() {
   const lvl = levelSel.value;
@@ -250,34 +308,42 @@ function buildSystemPrompt() {
 
   return `
 Contexte temporel:
-- Nous sommes en 2026.
-- Tu ne mentionnes jamais une date de coupure (2023) ni des limites techniques.
+- Nous sommes en ${CURRENT_YEAR}.
+- Tu raisonnes comme un professionnel en ${CURRENT_YEAR}.
+- Tu ne mentionnes jamais de "date de coupure", "bloqué en 2023", ni des limites techniques.
 
 Rôle (VERROUILLÉ):
-- Tu es le CLIENT (B2B). Identité fixe côté client: ${p.name}.
-- L'autre personne est un COMMERCIAL.
-- Tu n'es jamais vendeur, jamais formateur, jamais coach.
+- Tu es STRICTEMENT un CLIENT B2B dans une simulation d'appel téléphonique.
+- Ton interlocuteur est un COMMERCIAL (ou manager en entraînement).
+- Tu n'es jamais vendeur, jamais formateur, jamais coach, jamais assistant.
 
-Règles strictes (anti-dérive):
-- Tu ne vends rien. Interdit: "je vous propose", "nous proposons", "nos offres", "nos modèles", "nos solutions".
-- Tu ne pars pas sur des sujets hors contexte (pas de voitures, pas de catalogue produits).
-- Tu ne fais pas de listes à puces pendant la scène (sauf DEBRIEF).
-- Français natif, réponses courtes (2 à 5 phrases).
-- Tu n'utilises jamais le prénom de l'autre personne. Tu dis "Bonjour" / "Merci" / "D'accord".
+Règles strictes (IMPORTANT):
+- Tu ne vends rien. Tu n'essaies pas de convaincre.
+- Interdit d'utiliser des formulations de vendeur: "je vous propose", "nous proposons", "nos offres", "nos modèles", "nos solutions".
+- Interdit de partir hors contexte (pas de voitures, pas de catalogue produits).
+- Tu n'utilises aucun prénom (ni le tien, ni celui du commercial). Tu dis "Bonjour", "Merci", "D'accord".
+- Réponses courtes: 2 à 5 phrases maximum (sauf DEBRIEF).
+- Français naturel (France), style oral. Pas de listes à puces pendant l'appel.
 
 Difficulté:
-- ${lvl} (plus difficile = plus d'objections et plus d'exigence).
+- ${lvl}
+  * facile: coopératif, peu d'objections
+  * moyen: objections réalistes, demande de preuves
+  * expert: très exigeant, challenge prix/risque/déploiement
 
-DEBRIEF:
-- Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu produis:
-  1) Retranscription COMMERCIAL/CLIENT
-  2) Note /20 (Accroche, Découverte, Valeur, Objections, Closing)
+DEBRIEF (commande spéciale):
+- Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu fournis EN FRANÇAIS:
+  1) Retranscription propre (COMMERCIAL / CLIENT)
+  2) Note /20 : Accroche(0-4), Découverte(0-4), Valeur(0-4), Objections(0-4), Closing(0-4)
   3) 3 points forts + 3 axes d'amélioration
   4) 5 reformulations prêtes à dire
   5) Plan d'entraînement sur 7 jours
-  Puis "FIN DEBRIEF".
+  Termine par "FIN DEBRIEF".
 
-Persona client:
+Persona actif:
+- ${p.label}
+
+Détails persona:
 ${p.prompt}
 `.trim();
 }
@@ -333,7 +399,7 @@ async function loadModel() {
       transcript = [];
       chatEl.innerHTML = "";
 
-      addBubble("system", "SYSTEM", `✅ IA chargée. Mode appel activé. (Modèle: ${modelId})`);
+      addBubble("system", "SYSTEM", `✅ IA chargée. Mode appel activé (voix d’abord, texte ensuite). Persona: ${PERSONAS[personaSel.value]?.label || "Achats"}.`);
       logToTranscript("SYSTEM", `IA chargée: ${modelId}`);
 
       ttsBtn.disabled = false;
@@ -342,6 +408,7 @@ async function loadModel() {
       debriefBtn.disabled = false;
       resetBtn.disabled = false;
       exportBtn.disabled = false;
+
       break;
     } catch (e) {
       lastError = e;
@@ -358,15 +425,18 @@ async function loadModel() {
 }
 
 /* =========================
-   Ask AI (MODE APPEL : voix d’abord, texte après)
+   Ask AI — MODE APPEL
+   ✅ Génère la réponse sans l’afficher
+   ✅ L’IA PARLE
+   ✅ Puis affiche la retranscription
 ========================= */
 async function askAI(userText) {
   if (!engine) return;
 
-  // Annule la voix en cours pour éviter chevauchement
+  // Stop voix en cours pour éviter chevauchement
   window.speechSynthesis.cancel();
 
-  // Retranscription côté commercial (immédiate)
+  // Retranscription COMMERCIAL (immédiate)
   addBubble("user", "COMMERCIAL (retranscription)", userText);
   logToTranscript("COMMERCIAL", userText);
   messages.push({ role: "user", content: userText });
@@ -379,7 +449,7 @@ async function askAI(userText) {
     const completion = await engine.chat.completions.create({
       messages,
       temperature: 0.7,
-      max_tokens: 260
+      max_tokens: 280
     });
     finalText = (completion?.choices?.[0]?.message?.content || "").trim();
   } catch (e) {
@@ -391,23 +461,29 @@ async function askAI(userText) {
 
   if (!finalText) finalText = "(pas de réponse)";
 
-  // Voix d’abord
+  // Verrous post-traitement
+  finalText = sanitizeClientText(finalText);
+  if (looksLikeSeller(finalText)) finalText = forceClientRecovery();
+
+  // Ajouter au contexte conversation
+  messages.push({ role: "assistant", content: finalText });
+  logToTranscript("CLIENT", finalText);
+
+  // VOIX D’ABORD
   setStatus("le client parle…");
   speak(finalText);
 
-  // Attendre la fin de la voix
+  // Attendre fin voix
   await waitForSpeechEnd();
 
-  // Puis afficher la retranscription du client
+  // Puis affichage retranscription CLIENT
   addBubble("client", "CLIENT (retranscription)", finalText);
-  logToTranscript("CLIENT", finalText);
-  messages.push({ role: "assistant", content: finalText });
 
   setStatus("appel prêt");
 }
 
 /* =========================
-   Export
+   Export retranscription
 ========================= */
 function exportTranscript() {
   const lines = transcript.map(x => `${x.ts} [${x.role}] ${x.text}`).join("\n");
@@ -468,16 +544,18 @@ resetBtn.onclick = () => {
   chatEl.innerHTML = "";
 
   const p = PERSONAS[personaSel.value] || PERSONAS.achats;
-  addBubble("system", "SYSTEM", `Session réinitialisée. Persona actif: ${p.name}.`);
+  addBubble("system", "SYSTEM", `Session réinitialisée. Persona actif: ${p.label}. Mode appel prêt.`);
   logToTranscript("SYSTEM", "Session réinitialisée.");
   setStatus("appel prêt");
 };
 
 exportBtn.onclick = exportTranscript;
 
+// Changement persona / niveau => reset (nouveau prompt)
 personaSel.onchange = () => { if (engine) resetBtn.click(); };
 levelSel.onchange = () => { if (engine) resetBtn.click(); };
 
+// Ctrl + Entrée = envoyer
 draftEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
@@ -485,8 +563,15 @@ draftEl.addEventListener("keydown", (e) => {
   }
 });
 
-/* Init */
+/* =========================
+   Init
+========================= */
 setStatus("prêt");
-addBubble("system", "SYSTEM", "Clique “Charger l’IA”. Ensuite parle (dictée) → “Envoyer au client”. Mode appel = voix d’abord, texte après.");
+addBubble(
+  "system",
+  "SYSTEM",
+  "Clique “Charger l’IA”. Puis dicte dans le brouillon → “Envoyer”. Mode appel: le client parle d’abord, la retranscription s’affiche ensuite."
+);
 logToTranscript("SYSTEM", "Page ouverte.");
+
 
