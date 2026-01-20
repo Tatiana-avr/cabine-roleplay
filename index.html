@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cabine de jeu de rôle vocal — Client IA</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 980px; margin: 22px auto; padding: 0 14px; }
+    .row { display:flex; gap:10px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+    button { padding: 10px 14px; cursor:pointer; }
+    select { padding: 10px 12px; }
+    #log { border: 1px solid #ddd; padding: 12px; height: 420px; overflow:auto; white-space: pre-wrap; border-radius: 10px; }
+    .muted { color:#666; font-size: 0.95em; }
+    .pill { display:inline-block; padding: 4px 10px; border:1px solid #ddd; border-radius: 999px; }
+  </style>
+</head>
+<body>
+  <h2>Cabine de jeu de rôle vocal — IA “Client”</h2>
+
+  <div class="row">
+    <span class="pill" id="status">Status: prêt</span>
+    <span class="pill" id="modelStatus">Modèle: non chargé</span>
+  </div>
+
+  <div class="row">
+    <label>Persona :</label>
+    <select id="persona">
+      <option value="sophie">Sophie Bernard (Achats, sceptique)</option>
+      <option value="marc">Marc Delcourt (Directeur co, pressé)</option>
+      <option value="colere">Client en colère (litige)</option>
+    </select>
+
+    <label>Niveau :</label>
+    <select id="level">
+      <option value="moyen">Moyen</option>
+      <option value="facile">Facile</option>
+      <option value="expert">Expert</option>
+    </select>
+
+    <button id="loadBtn">⬇️ Charger le modèle IA</button>
+  </div>
+
+  <div class="row">
+    <button id="talkBtn" disabled>🎤 Parler</button>
+    <button id="stopBtn" disabled>⏹ Stop</button>
+    <button id="debriefBtn" disabled>🧾 DEBRIEF</button>
+    <button id="exportBtn" disabled>⬇️ Télécharger la retranscription</button>
+    <button id="resetBtn" disabled>🗑 Reset</button>
+  </div>
+
+  <div class="muted">
+    1) Clique “Charger le modèle IA” (1ère fois : téléchargement).<br/>
+    2) Clique “Parler”, parle au client IA. L’IA répond à l’oral.<br/>
+    3) Clique “DEBRIEF” puis “Télécharger” pour la retranscription.
+  </div>
+
+  <div id="log"></div>
+
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
