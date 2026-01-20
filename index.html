@@ -3,83 +3,79 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cabine Roleplay Vocal — Client IA</title>
+  <title>Cabine — Jeu de rôle vocal (Client IA)</title>
   <style>
-    :root { color-scheme: light; }
-    body { font-family: Arial, sans-serif; max-width: 980px; margin: 20px auto; padding: 0 14px; }
-    h1 { font-size: 20px; margin: 0 0 10px; }
-    .row { display:flex; flex-wrap: wrap; gap:10px; align-items:center; margin: 10px 0; }
-    .pill { display:inline-block; padding: 5px 10px; border:1px solid #ddd; border-radius: 999px; font-size: 13px; }
-    button { padding: 10px 14px; cursor:pointer; border-radius: 10px; border: 1px solid #ddd; background: #fff; }
-    button:disabled { opacity: 0.5; cursor:not-allowed; }
-    select, input[type="checkbox"] { padding: 10px 12px; }
-    label { font-size: 14px; }
-    .muted { color:#666; font-size: 13px; line-height: 1.35; }
-    #log { border: 1px solid #ddd; padding: 12px; height: 460px; overflow:auto; white-space: pre-wrap; border-radius: 12px; background: #fafafa; }
-    .warn { color:#9a6b00; }
-    .ok { color:#0b7a0b; }
-    .err { color:#b00020; }
-    .spacer { flex: 1; }
+    body { font-family: Arial, sans-serif; max-width: 1000px; margin: 20px auto; padding: 0 14px; }
+    h2 { margin: 6px 0 12px; }
+    .row { display:flex; gap:10px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+    button { padding: 10px 14px; cursor:pointer; border: 1px solid #ddd; border-radius: 10px; background: #f7f7f7; }
+    button:disabled { opacity: 0.55; cursor:not-allowed; }
+    select { padding: 10px 12px; border-radius: 10px; border: 1px solid #ddd; }
+    #log { border: 1px solid #ddd; padding: 12px; height: 460px; overflow:auto; white-space: pre-wrap; border-radius: 14px; background: #fff; }
+    .muted { color:#666; font-size: 0.95em; line-height: 1.35; }
+    .pill { display:inline-block; padding: 5px 10px; border:1px solid #ddd; border-radius: 999px; background:#fff; }
+    .danger { color:#b00020; }
+    .ok { color:#1b5e20; }
+    .hint { font-size: 0.9em; }
+    .split { display:flex; gap:12px; flex-wrap: wrap; }
+    .card { border:1px solid #ddd; border-radius: 14px; padding: 12px; background:#fff; flex: 1; min-width: 280px; }
+    .ptt { font-weight: bold; }
   </style>
 </head>
 <body>
-  <h1>Cabine de jeu de rôle vocal — IA “Client”</h1>
+  <h2>Cabine de jeu de rôle vocal — IA “Client”</h2>
 
   <div class="row">
     <span class="pill" id="status">Status: prêt</span>
     <span class="pill" id="modelStatus">Modèle: non chargé</span>
-    <span class="pill" id="voiceStatus">Voix: —</span>
+    <span class="pill" id="voiceStatus">Voix: non détectée</span>
+    <span class="pill" id="micStatus">Micro: en attente</span>
   </div>
 
-  <div class="row">
-    <label>Persona :</label>
-    <select id="persona">
-      <option value="sophie">Sophie Bernard (Achats, sceptique)</option>
-      <option value="marc">Marc Delcourt (Dir. co, pressé)</option>
-      <option value="colere">Nadia Leroy (client en colère)</option>
-    </select>
+  <div class="split">
+    <div class="card">
+      <div class="row">
+        <label>Persona :</label>
+        <select id="persona">
+          <option value="sophie">Sophie Bernard (Achats sceptique)</option>
+          <option value="marc">Marc Delcourt (DirCo pressé)</option>
+          <option value="colere">Nadia Leroy (Client en colère)</option>
+        </select>
 
-    <label>Niveau :</label>
-    <select id="level">
-      <option value="moyen">Moyen</option>
-      <option value="facile">Facile</option>
-      <option value="expert">Expert</option>
-    </select>
+        <label>Niveau :</label>
+        <select id="level">
+          <option value="facile">Facile</option>
+          <option value="moyen" selected>Moyen</option>
+          <option value="expert">Expert</option>
+        </select>
+      </div>
 
-    <label>Réponses courtes :</label>
-    <select id="brevity">
-      <option value="tres_court">Très court</option>
-      <option value="court" selected>Court</option>
-      <option value="normal">Normal</option>
-    </select>
+      <div class="row">
+        <button id="loadBtn">⬇️ Charger le modèle IA</button>
+        <button id="resetBtn" disabled>🗑 Reset session</button>
+        <button id="debriefBtn" disabled>🧾 DEBRIEF</button>
+        <button id="exportBtn" disabled>⬇️ Télécharger la retranscription</button>
+      </div>
 
-    <span class="spacer"></span>
+      <div class="muted">
+        <div>1) Clique <b>Charger le modèle IA</b> (1ère fois : téléchargement du modèle).</div>
+        <div>2) Pour parler : <span class="ptt">maintenir</span> le bouton 🎤 (push-to-talk).</div>
+        <div>3) Clique <b>DEBRIEF</b> à la fin, puis exporte la retranscription.</div>
+        <div class="hint"><span class="danger">Conseillé :</span> Chrome ou Edge. Autorise le micro quand le navigateur demande.</div>
+      </div>
+    </div>
 
-    <button id="loadBtn">⬇️ Charger l’IA</button>
-  </div>
-
-  <div class="row">
-    <button id="talkBtn" disabled>🎤 Maintenir pour parler</button>
-    <button id="stopBtn" disabled>⏹ Stop</button>
-    <button id="debriefBtn" disabled>🧾 DEBRIEF</button>
-    <button id="exportBtn" disabled>⬇️ Télécharger la retranscription</button>
-    <button id="resetBtn" disabled>🗑 Reset</button>
-  </div>
-
-  <div class="row">
-    <label class="muted">
-      <input type="checkbox" id="autoSpeak" checked />
-      Lire la réponse à l’oral
-    </label>
-    <label class="muted">
-      <input type="checkbox" id="autoRestartMic" checked />
-      Relancer le micro s’il coupe (push-to-talk)
-    </label>
-  </div>
-
-  <div class="muted">
-    <div><b>Mode recommandé :</b> clique “Charger l’IA”, puis <b>maintiens</b> le bouton “🎤 Maintenir pour parler”.</div>
-    <div class="warn">Astuce : Edge a souvent une meilleure voix et de meilleures perf WebGPU que Chrome (selon PC).</div>
+    <div class="card">
+      <div class="row">
+        <button id="talkBtn" disabled title="Maintiens pour parler">🎤 Maintenir pour parler</button>
+        <button id="stopBtn" disabled>⏹ Stop</button>
+        <button id="ttsToggleBtn" disabled>🔊 Voix ON</button>
+      </div>
+      <div class="muted">
+        <div>• Le micro peut couper tout seul : le mode <b>maintenir pour parler</b> + relance auto règle ça.</div>
+        <div>• Si la voix te dérange : clique <b>Voix ON/OFF</b>.</div>
+      </div>
+    </div>
   </div>
 
   <div id="log"></div>
@@ -87,4 +83,3 @@
   <script type="module" src="./app.js"></script>
 </body>
 </html>
-
