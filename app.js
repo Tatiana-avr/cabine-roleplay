@@ -1,11 +1,12 @@
 // app.js — INEA Conseil — Simulation d’appel client IA (vocal d’abord, texte ensuite)
-// ✅ Mode appel : le client PARLE d’abord, la retranscription s’affiche APRÈS
-// ✅ DEBRIEF : écrit uniquement (jamais lu à voix haute)
-// ✅ Verrou CLIENT + anti “vendeur” + anti hors-sujet + année 2026
-// ✅ Anti-prénoms : ne t’appelle pas “Claire” (nettoyage automatique)
-// ✅ Timer d’appel + sonnerie (sans fichier externe) + états visuels (réfléchit / parle / prêt)
-// ✅ Micro dictée + Export retranscription
-// ✅ Fallback modèles : 3B puis 1B si besoin
+// ✅ Mode appel ULTRA plus fluide : streaming + la voix démarre dès la 1ère phrase
+// ✅ Le texte ne s’affiche qu’à la fin (retranscription), comme un vrai appel
+// ✅ DEBRIEF : écrit uniquement (jamais lu)
+// ✅ Verrou CLIENT + anti-vendeur + anti-hors-sujet + année 2026
+// ✅ Anti-prénoms : suppression “Bonjour Claire” + neutralisation
+// ✅ Timer d’appel + sonnerie + beep + états visuels
+// ✅ Micro dictée + export retranscription
+// ✅ Modèle rapide par défaut : 1B, puis fallback 3B
 
 import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
@@ -33,11 +34,10 @@ const debriefBtn = document.getElementById("debriefBtn");
 const resetBtn = document.getElementById("resetBtn");
 const exportBtn = document.getElementById("exportBtn");
 
-// Optional UI elements (from your “call-style” HTML)
-// If not present, we create a timer pill automatically.
-const calleeNameEl = document.querySelector(".calleeName");   // optional
-const callDotEl = document.querySelector(".dot");             // optional
-const callBadgeEl = document.querySelector(".callBadge");     // optional
+// Optional UI elements (from “call” HTML)
+const calleeNameEl = document.querySelector(".calleeName"); // optional
+const callDotEl = document.querySelector(".dot");           // optional
+const callBadgeEl = document.querySelector(".callBadge");   // optional
 
 /* =========================
    State
@@ -60,10 +60,12 @@ let callTimerEl = document.getElementById("callTimer");
 // Audio (ringtone / beeps)
 let audioCtx = null;
 
+// For streaming / speaking
+let activeTurnId = 0;
+
 /* =========================
    Time
 ========================= */
-// Tu as demandé explicitement 2026.
 const CURRENT_YEAR = 2026;
 
 /* =========================
@@ -109,38 +111,32 @@ function setCallState(state) {
   // state: "idle" | "ready" | "thinking" | "speaking" | "debrief" | "error"
   document.body.dataset.callState = state;
 
-  // little visual cue on the red dot (if exists)
   if (callDotEl) {
     if (state === "speaking") {
-      callDotEl.style.boxShadow = "0 0 0 8px rgba(227,6,19,.22)";
+      callDotEl.style.boxShadow = "0 0 0 10px rgba(227,6,19,.24)";
     } else if (state === "thinking") {
-      callDotEl.style.boxShadow = "0 0 0 8px rgba(17,24,39,.12)";
+      callDotEl.style.boxShadow = "0 0 0 10px rgba(17,24,39,.14)";
     } else {
       callDotEl.style.boxShadow = "0 0 0 6px rgba(227,6,19,.12)";
     }
   }
 
-  // optional badge text
   if (callBadgeEl) {
-    const strong = callBadgeEl.querySelector("strong");
-    const span = callBadgeEl.querySelector("span:nth-child(2)");
-    // keep it safe if structure differs
-    if (span) {
-      if (state === "speaking") span.textContent = "Client IA • parle";
-      else if (state === "thinking") span.textContent = "Client IA • réfléchit";
-      else if (state === "debrief") span.textContent = "Client IA • debrief";
-      else if (state === "error") span.textContent = "Client IA • erreur";
-      else span.textContent = "Client IA • simulation";
-      if (strong) strong.textContent = "Client IA";
+    const spans = callBadgeEl.querySelectorAll("span");
+    if (spans && spans.length) {
+      const last = spans[spans.length - 1];
+      if (state === "speaking") last.textContent = "Client IA • parle";
+      else if (state === "thinking") last.textContent = "Client IA • réfléchit";
+      else if (state === "debrief") last.textContent = "Client IA • debrief";
+      else if (state === "error") last.textContent = "Client IA • erreur";
+      else last.textContent = "Client IA • simulation";
     }
   }
 }
 
 function updateCalleeTitle() {
   const p = PERSONAS[personaSel.value] || PERSONAS.achats;
-  if (calleeNameEl) {
-    calleeNameEl.textContent = `Client — ${p.label}`;
-  }
+  if (calleeNameEl) calleeNameEl.textContent = `Client — ${p.label}`;
 }
 
 /* =========================
@@ -149,8 +145,7 @@ function updateCalleeTitle() {
 function ensureTimerEl() {
   if (callTimerEl) return;
 
-  // create a pill in header status row if possible
-  const statusRow = statusEl?.parentElement; // .statusRow or .statusBar
+  const statusRow = statusEl?.parentElement; // .statusRow / .statusBar
   if (statusRow) {
     const pill = document.createElement("div");
     pill.className = "pill";
@@ -193,13 +188,10 @@ function resetCallTimer() {
 }
 
 /* =========================
-   WebAudio (sonnerie / beep)
-   - Sans fichier externe, 100% gratuit
+   WebAudio (sonnerie / beep) — sans fichier externe
 ========================= */
 function getAudioCtx() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   return audioCtx;
 }
 
@@ -219,7 +211,6 @@ function playTone(freq, durationMs, gain = 0.06, type = "sine") {
   o.start(now);
   o.stop(now + durationMs / 1000);
 
-  // quick fade-out to avoid clicks
   g.gain.setValueAtTime(gain, now);
   g.gain.exponentialRampToValueAtTime(0.0001, now + durationMs / 1000);
 
@@ -227,27 +218,22 @@ function playTone(freq, durationMs, gain = 0.06, type = "sine") {
 }
 
 async function playRingtone() {
-  // A short “ring ring” effect (two-tone), avoids being too loud
   try {
     const ctx = getAudioCtx();
     if (ctx.state === "suspended") await ctx.resume();
-
-    // ring pattern
-    await playTone(440, 180, 0.05, "sine");
-    await playTone(660, 180, 0.05, "sine");
+    await playTone(440, 160, 0.05, "sine");
+    await playTone(660, 160, 0.05, "sine");
     await new Promise(r => setTimeout(r, 120));
-    await playTone(440, 180, 0.05, "sine");
-    await playTone(660, 180, 0.05, "sine");
-  } catch (_) {
-    // ignore if blocked
-  }
+    await playTone(440, 160, 0.05, "sine");
+    await playTone(660, 160, 0.05, "sine");
+  } catch (_) {}
 }
 
 async function playBeep() {
   try {
     const ctx = getAudioCtx();
     if (ctx.state === "suspended") await ctx.resume();
-    await playTone(880, 90, 0.04, "square");
+    await playTone(880, 70, 0.04, "square");
   } catch (_) {}
 }
 
@@ -288,32 +274,76 @@ function normalizeForTTS(text) {
   return t;
 }
 
-function speak(text) {
-  if (!ttsEnabled) return;
-  const cleaned = normalizeForTTS(text);
-  window.speechSynthesis.cancel();
-
-  const u = new SpeechSynthesisUtterance(cleaned);
-  u.lang = "fr-FR";
-  if (bestVoice) u.voice = bestVoice;
-  u.rate = 1.02;
-  u.pitch = 1.0;
-
-  window.speechSynthesis.speak(u);
-}
-
-function waitForSpeechEnd() {
+function speakOne(text) {
   return new Promise((resolve) => {
-    const check = () => {
-      if (!speechSynthesis.speaking) resolve();
-      else setTimeout(check, 120);
-    };
-    check();
+    if (!ttsEnabled) return resolve();
+    const cleaned = normalizeForTTS(text);
+    if (!cleaned) return resolve();
+
+    const u = new SpeechSynthesisUtterance(cleaned);
+    u.lang = "fr-FR";
+    if (bestVoice) u.voice = bestVoice;
+    u.rate = 1.03;
+    u.pitch = 1.0;
+
+    u.onend = () => resolve();
+    u.onerror = () => resolve();
+    window.speechSynthesis.speak(u);
   });
 }
 
+function cancelSpeech() {
+  window.speechSynthesis.cancel();
+}
+
 /* =========================
-   STT (dictée) — rien n’est envoyé automatiquement
+   Speech queue (pour parler phrase par phrase)
+========================= */
+class SpeechQueue {
+  constructor(turnId) {
+    this.turnId = turnId;
+    this.queue = [];
+    this.closed = false;
+    this.speaking = false;
+    this.doneResolver = null;
+    this.done = new Promise((res) => (this.doneResolver = res));
+  }
+
+  enqueue(sentence) {
+    if (this.closed) return;
+    if (this.turnId !== activeTurnId) return; // old turn
+    const s = (sentence || "").trim();
+    if (!s) return;
+    this.queue.push(s);
+    this._pump();
+  }
+
+  close() {
+    this.closed = true;
+    this._pump();
+  }
+
+  async _pump() {
+    if (this.speaking) return;
+    this.speaking = true;
+
+    while (this.queue.length && this.turnId === activeTurnId) {
+      const s = this.queue.shift();
+      setCallState("speaking");
+      setStatus("le client parle…");
+      await speakOne(s);
+    }
+
+    this.speaking = false;
+
+    if (this.closed && this.queue.length === 0 && this.turnId === activeTurnId) {
+      this.doneResolver?.();
+    }
+  }
+}
+
+/* =========================
+   STT (dictée)
 ========================= */
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 const rec = SpeechRecognition ? new SpeechRecognition() : null;
@@ -377,8 +407,7 @@ if (rec) {
 }
 
 /* =========================
-   PERSONAS (match index.html: achats / ops / daf)
-   IMPORTANT: aucun prénom => anti “Bonjour Claire”
+   Personas — aucun prénom
 ========================= */
 const PERSONAS = {
   achats: {
@@ -394,21 +423,19 @@ Comportement:
 - Tu révèles budget / décideurs / calendrier uniquement si on te questionne correctement.
 `.trim()
   },
-
   ops: {
     label: "Ops (problème terrain urgent)",
     prompt: `
 Identité:
 - Tu es Directrice des opérations (B2B). Tu ne donnes pas ton prénom.
 Contexte:
-- Problème terrain: qualité irrégulière des rendez-vous, discours hétérogène, adoption faible des pratiques.
+- Problème terrain: RDV irréguliers, discours hétérogène, adoption faible des pratiques.
 Comportement:
 - Directe, pressée, pragmatique.
 - Objections obligatoires: "je n'ai pas le temps", "on a déjà essayé", "ça va être compliqué à déployer".
 - Tu veux: démarche simple, déploiement léger, résultats observables.
 `.trim()
   },
-
   daf: {
     label: "DAF (validation / négociation)",
     prompt: `
@@ -424,19 +451,21 @@ Comportement:
 };
 
 /* =========================
-   HARD VERROUS (post-traitement)
+   Verrous post-traitement
 ========================= */
 function sanitizeClientText(text) {
   let t = (text || "").trim();
 
-  // Supprime un "Bonjour + Prénom" au début => "Bonjour. ..."
+  // supprime "Bonjour + Prénom" au début
   t = t.replace(
     /^(bonjour|bonsoir|salut)\s*,?\s*[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ-]+(\s+[A-ZÀ-ÖØ-Ý][a-zà-öø-ÿ-]+)?\s*!?\s*/i,
     "$1. "
   );
 
-  // Neutralise certains prénoms si jamais le modèle insiste
+  // neutralise si jamais
   t = t.replace(/\bClaire\b/gi, "");
+
+  // nettoie
   t = t.replace(/\s{2,}/g, " ").trim();
   return t;
 }
@@ -454,7 +483,7 @@ function forceClientRecovery() {
 }
 
 /* =========================
-   SYSTEM PROMPT (verrou CLIENT + année + style oral)
+   System prompt
 ========================= */
 function buildSystemPrompt() {
   const lvl = levelSel.value;
@@ -463,7 +492,6 @@ function buildSystemPrompt() {
   return `
 Contexte temporel:
 - Nous sommes en ${CURRENT_YEAR}.
-- Tu raisonnes comme un professionnel en ${CURRENT_YEAR}.
 - Tu ne mentionnes jamais "bloqué en 2023" ni des limites techniques.
 
 Rôle (VERROUILLÉ):
@@ -474,17 +502,14 @@ Rôle (VERROUILLÉ):
 Règles strictes:
 - Tu ne vends rien. Tu ne proposes pas d'offres.
 - Interdit: "je vous propose", "nous proposons", "nos offres", "nos modèles", "nos solutions".
-- Interdit hors contexte (pas de voitures, pas de sujets non liés à un échange B2B).
+- Interdit hors contexte.
 - Tu n'utilises aucun prénom (ni le tien, ni celui du commercial).
 - Style oral, français naturel (France).
-- 2 à 5 phrases maximum par réponse (sauf DEBRIEF).
+- 2 à 5 phrases maximum (sauf DEBRIEF).
 - Pas de listes à puces pendant l'appel (sauf DEBRIEF).
 
 Difficulté:
 - ${lvl}
-  * facile: coopératif, peu d'objections
-  * moyen: objections réalistes, demande de preuves
-  * expert: très exigeant, challenge prix/risque/déploiement
 
 DEBRIEF:
 - Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu fournis EN FRANÇAIS:
@@ -494,7 +519,7 @@ DEBRIEF:
   4) 5 reformulations prêtes à dire
   5) Plan d'entraînement sur 7 jours
   Termine par "FIN DEBRIEF".
-  IMPORTANT: le DEBRIEF doit être écrit et structuré.
+  IMPORTANT: DEBRIEF écrit uniquement (pas de voix).
 
 Persona actif:
 - ${p.label}
@@ -509,11 +534,11 @@ function buildSystemMessage() {
 }
 
 /* =========================
-   Model (fallback)
+   Model (rapide d’abord)
 ========================= */
 const MODEL_CANDIDATES = [
-  "Llama-3.2-3B-Instruct-q4f16_1-MLC",
-  "Llama-3.2-1B-Instruct-q4f16_1-MLC"
+  "Llama-3.2-1B-Instruct-q4f16_1-MLC",
+  "Llama-3.2-3B-Instruct-q4f16_1-MLC"
 ];
 
 function hasWebGPU() {
@@ -561,7 +586,7 @@ async function loadModel() {
       updateCalleeTitle();
       startCallTimer();
 
-      addBubble("system", "SYSTEM", `✅ IA chargée. Mode appel activé. Persona: ${PERSONAS[personaSel.value]?.label || "Achats"}.`);
+      addBubble("system", "SYSTEM", `✅ IA chargée. Mode appel (stream + voix immédiate). Persona: ${PERSONAS[personaSel.value]?.label || "Achats"}.`);
       logToTranscript("SYSTEM", `IA chargée: ${modelId}`);
 
       ttsBtn.disabled = false;
@@ -588,11 +613,32 @@ async function loadModel() {
 }
 
 /* =========================
-   Ask AI — MODE APPEL
-   ✅ Génère la réponse sans l’afficher
-   ✅ (si pas DEBRIEF) L’IA PARLE
-   ✅ Puis affiche la retranscription
-   ✅ (si DEBRIEF) écrit uniquement (pas de voix)
+   Sentence extraction (stream)
+========================= */
+function extractSentencesFromBuffer(buf) {
+  // Split when we have a strong sentence end.
+  // Keeps last partial sentence in buffer.
+  const sentences = [];
+  let lastCut = 0;
+
+  // Detect punctuation that likely ends a spoken sentence.
+  const re = /[.!?…]+(?:\s+|$)/g;
+  let m;
+  while ((m = re.exec(buf)) !== null) {
+    const end = m.index + m[0].length;
+    const piece = buf.slice(lastCut, end).trim();
+    if (piece) sentences.push(piece);
+    lastCut = end;
+  }
+
+  const rest = buf.slice(lastCut);
+  return { sentences, rest };
+}
+
+/* =========================
+   Ask AI — streaming + voix phrase par phrase
+   - texte affiché seulement à la fin
+   - DEBRIEF : écrit uniquement
 ========================= */
 async function askAI(userText) {
   if (!engine) return;
@@ -602,13 +648,17 @@ async function askAI(userText) {
 
   const isDebrief = raw.toUpperCase() === "DEBRIEF";
 
-  // Stop voix en cours pour éviter chevauchement
-  window.speechSynthesis.cancel();
+  // new turn
+  activeTurnId++;
+  const turnId = activeTurnId;
 
-  // Beep à l'envoi (effet “appel”)
+  // Stop any ongoing speech
+  cancelSpeech();
+
+  // audio cue
   await playBeep();
 
-  // Retranscription COMMERCIAL (immédiate)
+  // Show commercial transcript immediately
   addBubble("user", "COMMERCIAL (retranscription)", raw);
   logToTranscript("COMMERCIAL", raw);
   messages.push({ role: "user", content: raw });
@@ -616,48 +666,118 @@ async function askAI(userText) {
   setCallState("thinking");
   setStatus(isDebrief ? "debrief (écrit)…" : "le client réfléchit…");
 
-  // Génération (sans streaming affiché)
+  // Fast token settings
+  const maxTokensNormal = 180; // faster
+  const maxTokensDebrief = 520;
+
+  if (isDebrief) {
+    // No voice, no need for “voice-first”
+    let finalText = "";
+    try {
+      const completion = await engine.chat.completions.create({
+        messages,
+        temperature: 0.35,
+        max_tokens: maxTokensDebrief
+      });
+      finalText = (completion?.choices?.[0]?.message?.content || "").trim();
+    } catch (e) {
+      setCallState("error");
+      addBubble("system", "SYSTEM", "Erreur IA pendant le DEBRIEF.");
+      setStatus("erreur");
+      console.error(e);
+      return;
+    }
+
+    finalText = sanitizeClientText(finalText);
+    messages.push({ role: "assistant", content: finalText });
+    logToTranscript("DEBRIEF", finalText);
+
+    setCallState("debrief");
+    setStatus("debrief (écrit) prêt");
+    addBubble("system", "DEBRIEF (écrit)", finalText);
+
+    setCallState("ready");
+    setStatus("appel prêt");
+    return;
+  }
+
+  // Normal call: streaming + voice starts ASAP
+  const speechQ = new SpeechQueue(turnId);
+
   let finalText = "";
+  let buffer = "";
+  let blocked = false; // if we detect seller drift, we replace the whole response
+
   try {
-    const completion = await engine.chat.completions.create({
+    const stream = await engine.chat.completions.create({
       messages,
-      temperature: isDebrief ? 0.4 : 0.7,
-      max_tokens: isDebrief ? 520 : 260
+      temperature: 0.65,
+      max_tokens: maxTokensNormal,
+      stream: true
     });
-    finalText = (completion?.choices?.[0]?.message?.content || "").trim();
+
+    for await (const chunk of stream) {
+      if (turnId !== activeTurnId) break; // canceled by reset / new send
+
+      const delta = chunk?.choices?.[0]?.delta?.content || "";
+      if (!delta) continue;
+
+      buffer += delta;
+      finalText += delta;
+
+      // Extract complete sentences and speak them ASAP
+      const { sentences, rest } = extractSentencesFromBuffer(buffer);
+      buffer = rest;
+
+      for (const s0 of sentences) {
+        if (turnId !== activeTurnId) break;
+        if (blocked) continue;
+
+        let s = sanitizeClientText(s0);
+
+        // Hard anti-seller in real-time:
+        if (looksLikeSeller(s)) {
+          blocked = true;
+          const rec = forceClientRecovery();
+          speechQ.enqueue(rec);
+          finalText = rec;     // overwrite final
+          buffer = "";         // drop remaining
+          break;
+        }
+
+        // Speak sentence now
+        speechQ.enqueue(s);
+      }
+    }
   } catch (e) {
     setCallState("error");
     addBubble("system", "SYSTEM", "Erreur IA pendant la réponse.");
     setStatus("erreur");
     console.error(e);
+    speechQ.close();
     return;
   }
 
-  if (!finalText) finalText = "(pas de réponse)";
-
-  // Verrous post-traitement
-  finalText = sanitizeClientText(finalText);
-  if (!isDebrief && looksLikeSeller(finalText)) finalText = forceClientRecovery();
-
-  // Ajouter au contexte conversation
-  messages.push({ role: "assistant", content: finalText });
-  logToTranscript(isDebrief ? "DEBRIEF" : "CLIENT", finalText);
-
-  // MODE APPEL
-  if (!isDebrief) {
-    setCallState("speaking");
-    setStatus("le client parle…");
-    speak(finalText);
-    await waitForSpeechEnd();
-
-    // Puis affichage retranscription CLIENT
-    addBubble("client", "CLIENT (retranscription)", finalText);
-  } else {
-    // DEBRIEF : écrit uniquement (pas de voix)
-    setCallState("debrief");
-    setStatus("debrief (écrit) prêt");
-    addBubble("system", "DEBRIEF (écrit)", finalText);
+  // If we still have remaining buffer, speak it as last bit (if not blocked)
+  if (turnId === activeTurnId && !blocked) {
+    const tail = sanitizeClientText(buffer.trim());
+    if (tail) speechQ.enqueue(tail);
   }
+
+  // close and wait for speech to finish
+  speechQ.close();
+  await speechQ.done;
+
+  // Now show transcript AFTER speech (call illusion)
+  if (turnId !== activeTurnId) return;
+
+  let shownText = blocked ? finalText : sanitizeClientText(finalText.trim());
+  if (looksLikeSeller(shownText)) shownText = forceClientRecovery();
+
+  messages.push({ role: "assistant", content: shownText });
+  logToTranscript("CLIENT", shownText);
+
+  addBubble("client", "CLIENT (retranscription)", shownText);
 
   setCallState("ready");
   setStatus("appel prêt");
@@ -685,7 +805,6 @@ function exportTranscript() {
 loadBtn.onclick = async () => {
   loadBtn.disabled = true;
 
-  // Sonnerie au clic (effet “décrocher”)
   await playRingtone();
 
   try {
@@ -703,7 +822,7 @@ loadBtn.onclick = async () => {
 ttsBtn.onclick = () => {
   ttsEnabled = !ttsEnabled;
   ttsBtn.textContent = ttsEnabled ? "🔊 Voix ON" : "🔇 Voix OFF";
-  if (!ttsEnabled) window.speechSynthesis.cancel();
+  if (!ttsEnabled) cancelSpeech();
 };
 
 micStartBtn.onclick = startListening;
@@ -722,7 +841,8 @@ debriefBtn.onclick = async () => {
 };
 
 resetBtn.onclick = () => {
-  window.speechSynthesis.cancel();
+  activeTurnId++; // cancel streaming/speaking of any previous turn
+  cancelSpeech();
   stopListening();
 
   messages = [buildSystemMessage()];
@@ -741,14 +861,14 @@ resetBtn.onclick = () => {
 
 exportBtn.onclick = exportTranscript;
 
-// Changement persona / niveau => reset (nouveau prompt)
+// persona / niveau => reset (nouveau prompt)
 personaSel.onchange = () => {
   updateCalleeTitle();
   if (engine) resetBtn.click();
 };
 levelSel.onchange = () => { if (engine) resetBtn.click(); };
 
-// Ctrl + Entrée = envoyer
+// Ctrl+Enter = envoyer
 draftEl.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
     e.preventDefault();
@@ -763,11 +883,11 @@ ensureTimerEl();
 updateCalleeTitle();
 setCallState("idle");
 setStatus("prêt");
+
 addBubble(
   "system",
   "SYSTEM",
-  "Clique “Charger l’IA” (sonnerie + démarrage appel). Puis dicte dans le brouillon → “Envoyer”. Mode appel: voix d’abord, texte après. DEBRIEF: écrit uniquement."
+  "Clique “Charger l’IA”. Ensuite dicte → “Envoyer”. Mode appel: streaming + la voix démarre dès la 1ère phrase. Retranscription affichée à la fin. DEBRIEF: écrit uniquement."
 );
 logToTranscript("SYSTEM", "Page ouverte.");
-
 
