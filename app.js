@@ -240,7 +240,7 @@ function buildSystem(){
    ✅ On met un modèle "low resource" et plus rapide.
    Tu peux repasser en 3B si les PC sont puissants.
 ========================= */
-const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
 
 /* =========================
    Load model (robuste)
