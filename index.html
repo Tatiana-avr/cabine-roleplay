@@ -5,80 +5,320 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cabine — Jeu de rôle vocal (Client IA)</title>
   <style>
-    body { font-family: Arial, sans-serif; max-width: 1000px; margin: 20px auto; padding: 0 14px; }
-    h2 { margin: 6px 0 12px; }
-    .row { display:flex; gap:10px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
-    button { padding: 10px 14px; cursor:pointer; border: 1px solid #ddd; border-radius: 10px; background: #f7f7f7; }
-    button:disabled { opacity: 0.55; cursor:not-allowed; }
-    select { padding: 10px 12px; border-radius: 10px; border: 1px solid #ddd; }
-    #log { border: 1px solid #ddd; padding: 12px; height: 460px; overflow:auto; white-space: pre-wrap; border-radius: 14px; background: #fff; }
-    .muted { color:#666; font-size: 0.95em; line-height: 1.35; }
-    .pill { display:inline-block; padding: 5px 10px; border:1px solid #ddd; border-radius: 999px; background:#fff; }
-    .danger { color:#b00020; }
-    .ok { color:#1b5e20; }
-    .hint { font-size: 0.9em; }
-    .split { display:flex; gap:12px; flex-wrap: wrap; }
-    .card { border:1px solid #ddd; border-radius: 14px; padding: 12px; background:#fff; flex: 1; min-width: 280px; }
-    .ptt { font-weight: bold; }
+    :root{
+      --bg:#0b1220;
+      --panel:#111a2e;
+      --panel2:#0f1730;
+      --card:#0f1b34;
+      --line:rgba(255,255,255,.10);
+      --text:rgba(255,255,255,.92);
+      --muted:rgba(255,255,255,.65);
+      --accent:#6ee7ff;
+      --good:#6ee7b7;
+      --warn:#fbbf24;
+      --danger:#fb7185;
+      --shadow: 0 10px 30px rgba(0,0,0,.35);
+      --radius: 18px;
+    }
+
+    *{ box-sizing:border-box; }
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      background: radial-gradient(1200px 700px at 20% 0%, #172554 0%, var(--bg) 55%, #060a14 100%);
+      color: var(--text);
+    }
+
+    .wrap{
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 14px 24px;
+    }
+
+    header{
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:14px;
+      margin-bottom: 14px;
+    }
+
+    h1{
+      margin:0;
+      font-size: 22px;
+      letter-spacing:.2px;
+    }
+    .sub{
+      margin-top:6px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height:1.35;
+    }
+
+    .statusBar{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .pill{
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.05);
+      padding: 7px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--muted);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(8px);
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns: 1fr 360px;
+      gap: 14px;
+    }
+
+    @media (max-width: 980px){
+      .grid{ grid-template-columns: 1fr; }
+    }
+
+    .card{
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,.06) 0%, rgba(255,255,255,.03) 100%);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+
+    .cardHeader{
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      background: rgba(255,255,255,.03);
+    }
+
+    .cardHeader strong{
+      font-size: 13px;
+      letter-spacing:.2px;
+      color: rgba(255,255,255,.9);
+    }
+
+    .chat{
+      height: 560px;
+      overflow:auto;
+      padding: 14px;
+      background:
+        radial-gradient(900px 500px at 80% 0%, rgba(110,231,255,.10) 0%, rgba(0,0,0,0) 55%),
+        rgba(0,0,0,.18);
+    }
+
+    .bubble{
+      max-width: 82%;
+      padding: 10px 12px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      margin: 10px 0;
+      line-height: 1.35;
+      font-size: 14px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    .bubble .meta{
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      display:flex;
+      gap:8px;
+      align-items:center;
+    }
+    .bubble.client{
+      background: rgba(110,231,255,.08);
+      border-color: rgba(110,231,255,.22);
+      margin-right:auto;
+    }
+    .bubble.user{
+      background: rgba(110,231,183,.08);
+      border-color: rgba(110,231,183,.22);
+      margin-left:auto;
+    }
+    .bubble.system{
+      max-width: 100%;
+      background: rgba(255,255,255,.05);
+      margin-left:auto;
+      margin-right:auto;
+    }
+
+    .panelBody{
+      padding: 14px;
+      display:flex;
+      flex-direction:column;
+      gap: 12px;
+    }
+
+    label{
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    select, textarea, input{
+      width:100%;
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: rgba(0,0,0,.25);
+      color: var(--text);
+      padding: 10px 12px;
+      outline: none;
+    }
+
+    textarea{
+      min-height: 110px;
+      resize: vertical;
+      line-height: 1.35;
+      font-size: 14px;
+    }
+
+    .row{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+
+    .btn{
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.06);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 14px;
+      cursor:pointer;
+      font-weight: 600;
+      font-size: 13px;
+      transition: transform .06s ease, background .2s ease;
+      user-select:none;
+    }
+    .btn:hover{ background: rgba(255,255,255,.10); }
+    .btn:active{ transform: translateY(1px); }
+    .btn:disabled{ opacity: .55; cursor:not-allowed; }
+
+    .btnPrimary{ border-color: rgba(110,231,255,.35); background: rgba(110,231,255,.12); }
+    .btnGood{ border-color: rgba(110,231,183,.35); background: rgba(110,231,183,.12); }
+    .btnWarn{ border-color: rgba(251,191,36,.35); background: rgba(251,191,36,.12); }
+    .btnDanger{ border-color: rgba(251,113,133,.35); background: rgba(251,113,133,.12); }
+
+    .tiny{
+      font-size: 12px;
+      color: var(--muted);
+      line-height:1.35;
+    }
+
+    .divider{
+      height:1px;
+      background: var(--line);
+      margin: 6px 0;
+    }
+
+    .kbd{
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      font-size: 11px;
+      color: rgba(255,255,255,.75);
+      border: 1px solid var(--line);
+      padding: 2px 6px;
+      border-radius: 8px;
+      background: rgba(255,255,255,.06);
+    }
   </style>
 </head>
 <body>
-  <h2>Cabine de jeu de rôle vocal — IA “Client”</h2>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Cabine de jeu de rôle vocal — Client IA</h1>
+        <div class="sub">
+          Mode <b>dictée</b> : tu peux te taire, réfléchir, reprendre, puis cliquer <b>Envoyer au client</b> quand tu es prêt.
+          <br/>Conseillé : Chrome ou Edge (micro + WebGPU).
+        </div>
+      </div>
+      <div class="statusBar">
+        <div class="pill" id="status">Status: prêt</div>
+        <div class="pill" id="modelStatus">Modèle: non chargé</div>
+        <div class="pill" id="micStatus">Micro: en attente</div>
+        <div class="pill" id="voiceStatus">Voix: non détectée</div>
+      </div>
+    </header>
 
-  <div class="row">
-    <span class="pill" id="status">Status: prêt</span>
-    <span class="pill" id="modelStatus">Modèle: non chargé</span>
-    <span class="pill" id="voiceStatus">Voix: non détectée</span>
-    <span class="pill" id="micStatus">Micro: en attente</span>
-  </div>
-
-  <div class="split">
-    <div class="card">
-      <div class="row">
-        <label>Persona :</label>
-        <select id="persona">
-          <option value="sophie">Sophie Bernard (Achats sceptique)</option>
-          <option value="marc">Marc Delcourt (DirCo pressé)</option>
-          <option value="colere">Nadia Leroy (Client en colère)</option>
-        </select>
-
-        <label>Niveau :</label>
-        <select id="level">
-          <option value="facile">Facile</option>
-          <option value="moyen" selected>Moyen</option>
-          <option value="expert">Expert</option>
-        </select>
+    <div class="grid">
+      <!-- Chat -->
+      <div class="card">
+        <div class="cardHeader">
+          <strong>Conversation</strong>
+          <div class="tiny">Streaming activé (texte du client en direct)</div>
+        </div>
+        <div class="chat" id="chat"></div>
       </div>
 
-      <div class="row">
-        <button id="loadBtn">⬇️ Charger le modèle IA</button>
-        <button id="resetBtn" disabled>🗑 Reset session</button>
-        <button id="debriefBtn" disabled>🧾 DEBRIEF</button>
-        <button id="exportBtn" disabled>⬇️ Télécharger la retranscription</button>
-      </div>
+      <!-- Controls -->
+      <div class="card">
+        <div class="cardHeader">
+          <strong>Contrôles</strong>
+          <div class="tiny">Raccourci : <span class="kbd">Ctrl</span> + <span class="kbd">Enter</span> pour envoyer</div>
+        </div>
 
-      <div class="muted">
-        <div>1) Clique <b>Charger le modèle IA</b> (1ère fois : téléchargement du modèle).</div>
-        <div>2) Pour parler : <span class="ptt">maintenir</span> le bouton 🎤 (push-to-talk).</div>
-        <div>3) Clique <b>DEBRIEF</b> à la fin, puis exporte la retranscription.</div>
-        <div class="hint"><span class="danger">Conseillé :</span> Chrome ou Edge. Autorise le micro quand le navigateur demande.</div>
+        <div class="panelBody">
+          <div>
+            <label>Persona client</label>
+            <select id="persona">
+              <option value="sophie">Sophie Bernard (Achats sceptique)</option>
+              <option value="marc">Marc Delcourt (DirCo pressé)</option>
+              <option value="colere">Nadia Leroy (Client en colère)</option>
+            </select>
+          </div>
+
+          <div>
+            <label>Niveau</label>
+            <select id="level">
+              <option value="facile">Facile</option>
+              <option value="moyen" selected>Moyen</option>
+              <option value="expert">Expert</option>
+            </select>
+          </div>
+
+          <div class="row">
+            <button class="btn btnPrimary" id="loadBtn">⬇️ Charger l’IA</button>
+            <button class="btn" id="ttsBtn" disabled>🔊 Voix ON</button>
+          </div>
+
+          <div class="divider"></div>
+
+          <div>
+            <label>Brouillon (dictée micro + corrections)</label>
+            <textarea id="draft" placeholder="Clique “Démarrer l’écoute”, parle, puis corrige ici si besoin. Quand tu es prêt, clique “Envoyer au client”."></textarea>
+            <div class="tiny">Astuce : si la dictée coupe, elle redémarre automatiquement. Rien n’est envoyé tant que tu ne cliques pas “Envoyer”.</div>
+          </div>
+
+          <div class="row">
+            <button class="btn btnGood" id="micStart" disabled>🎤 Démarrer l’écoute</button>
+            <button class="btn" id="micStop" disabled>⏹ Stop micro</button>
+          </div>
+
+          <div class="row">
+            <button class="btn btnGood" id="sendBtn" disabled>➡️ Envoyer au client</button>
+            <button class="btn btnWarn" id="debriefBtn" disabled>🧾 DEBRIEF</button>
+          </div>
+
+          <div class="row">
+            <button class="btn" id="resetBtn" disabled>🗑 Reset</button>
+            <button class="btn" id="exportBtn" disabled>⬇️ Télécharger retranscription</button>
+          </div>
+
+          <div class="tiny">
+            <b>Important :</b> 1ère fois, le modèle se télécharge (normal). Ensuite c’est plus rapide.
+          </div>
+        </div>
       </div>
     </div>
-
-    <div class="card">
-      <div class="row">
-        <button id="talkBtn" disabled title="Maintiens pour parler">🎤 Maintenir pour parler</button>
-        <button id="stopBtn" disabled>⏹ Stop</button>
-        <button id="ttsToggleBtn" disabled>🔊 Voix ON</button>
-      </div>
-      <div class="muted">
-        <div>• Le micro peut couper tout seul : le mode <b>maintenir pour parler</b> + relance auto règle ça.</div>
-        <div>• Si la voix te dérange : clique <b>Voix ON/OFF</b>.</div>
-      </div>
-    </div>
   </div>
-
-  <div id="log"></div>
 
   <script type="module" src="./app.js"></script>
 </body>
