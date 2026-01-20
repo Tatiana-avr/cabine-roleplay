@@ -1,82 +1,135 @@
 import { CreateMLCEngine } from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
+/* =========================
+   DOM
+========================= */
 const statusEl = document.getElementById("status");
 const modelStatusEl = document.getElementById("modelStatus");
+const voiceStatusEl = document.getElementById("voiceStatus");
+const micStatusEl = document.getElementById("micStatus");
 const logEl = document.getElementById("log");
 
 const loadBtn = document.getElementById("loadBtn");
-function startRec() {
-  if (!rec) { alert("Reconnaissance vocale non supportée. Essaie Chrome/Edge."); return; }
-  talkBtn.disabled = true;
-  stopBtn.disabled = false;
-  rec.start();
-}
-
-function stopRec() {
-  if (!rec) return;
-  rec.stop();
-  stopBtn.disabled = true;
-  talkBtn.disabled = false;
-}
-
-// Appui = start, relâche = stop (souris)
-talkBtn.onmousedown = startRec;
-talkBtn.onmouseup = stopRec;
-talkBtn.onmouseleave = stopRec;
-
-// Mobile: toucher = start, relâcher = stop
-talkBtn.ontouchstart = (e) => { e.preventDefault(); startRec(); };
-talkBtn.ontouchend = (e) => { e.preventDefault(); stopRec(); };
-
-// bouton stop reste possible
-stopBtn.onclick = stopRec;
-let isListening = false;
-
-function startRec() { isListening = true; /* ... */ }
-function stopRec() { isListening = false; /* ... */ }
-
-if (rec) {
-  rec.onend = () => {
-    // si ça s’arrête tout seul pendant qu’on écoute, on relance
-    if (isListening) rec.start();
-  };
-}
-
-const stopBtn = document.getElementById("stopBtn");
+const resetBtn = document.getElementById("resetBtn");
 const debriefBtn = document.getElementById("debriefBtn");
 const exportBtn = document.getElementById("exportBtn");
-const resetBtn = document.getElementById("resetBtn");
+const talkBtn = document.getElementById("talkBtn");
+const stopBtn = document.getElementById("stopBtn");
+const ttsToggleBtn = document.getElementById("ttsToggleBtn");
+
 const personaSel = document.getElementById("persona");
 const levelSel = document.getElementById("level");
 
+/* =========================
+   State
+========================= */
 let engine = null;
-let transcript = [];
-let messages = [];
-
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-const rec = SpeechRecognition ? new SpeechRecognition() : null;
-if (rec) {
-  rec.lang = "fr-FR";
-  rec.interimResults = false;
-  rec.continuous = false;
-}
+let messages = [];        // historique complet envoyé à l'IA (non limité, comme demandé)
+let transcript = [];      // retranscription complète (export)
+let ttsEnabled = true;
 
 let bestVoice = null;
 
+let isListening = false;  // push-to-talk + relance auto
+let currentPartialClientLine = null; // streaming affiche en direct
+
+/* =========================
+   Helpers UI
+========================= */
+function setStatus(txt) { statusEl.textContent = `Status: ${txt}`; }
+function setModelStatus(txt) { modelStatusEl.textContent = `Modèle: ${txt}`; }
+function setVoiceStatus(txt) { voiceStatusEl.textContent = `Voix: ${txt}`; }
+function setMicStatus(txt) { micStatusEl.textContent = `Micro: ${txt}`; }
+
+function scrollLog() { logEl.scrollTop = logEl.scrollHeight; }
+
+function appendLine(role, text) {
+  logEl.textContent += `[${role}] ${text}\n`;
+  scrollLog();
+  transcript.push({ ts: new Date().toISOString(), role, text });
+}
+
+function appendSystem(text) { appendLine("SYSTEM", text); }
+
+function appendCommercial(text) {
+  appendLine("COMMERCIAL", text);
+}
+
+function appendClientFinal(text) {
+  // remplace la ligne streaming si elle existe
+  if (currentPartialClientLine !== null) {
+    // on supprime la dernière ligne partielle du log et on met la finale
+    // méthode simple : on réécrit tout (ok pour des logs raisonnables)
+    // mais pour éviter de casser l'export, on ne met PAS la partielle dans transcript
+    // => donc ici, on ajoute la finale normalement
+    currentPartialClientLine = null;
+  }
+  appendLine("CLIENT", text);
+}
+
+function renderClientStreamingStart() {
+  // on affiche une ligne CLIENT vide dans le log (visual only)
+  // IMPORTANT: on ne l'ajoute pas à transcript (sinon export plein de bouts)
+  logEl.textContent += `[CLIENT] `;
+  scrollLog();
+  currentPartialClientLine = "";
+}
+
+function renderClientStreamingDelta(delta) {
+  if (currentPartialClientLine === null) return;
+  currentPartialClientLine += delta;
+  // on met à jour la toute fin du log (visual only)
+  // technique: retirer tout après le dernier "[CLIENT] " puis réécrire
+  // plus simple et robuste: reconstruire la dernière ligne uniquement
+  const all = logEl.textContent;
+  const idx = all.lastIndexOf("[CLIENT] ");
+  if (idx >= 0) {
+    logEl.textContent = all.slice(0, idx) + "[CLIENT] " + currentPartialClientLine;
+    scrollLog();
+  }
+}
+
+function renderClientStreamingEnd(finalText) {
+  // ajoute un saut de ligne à l'affichage (si pas déjà)
+  if (currentPartialClientLine !== null) {
+    const all = logEl.textContent;
+    if (!all.endsWith("\n")) logEl.textContent += "\n";
+    currentPartialClientLine = null;
+  }
+  appendClientFinal(finalText);
+}
+
+/* =========================
+   Speech synthesis (TTS)
+========================= */
 function pickBestVoice() {
-  const voices = window.speechSynthesis.getVoices();
-  // On privilégie les voix FR "naturelles" (Edge/Windows/Mac peuvent en avoir)
+  const voices = window.speechSynthesis.getVoices() || [];
+  if (!voices.length) {
+    setVoiceStatus("pas de voix détectée");
+    return;
+  }
+
+  // préféré : FR + "natural/neural/siri/microsoft/google"
   const preferred = voices.filter(v =>
-    v.lang.toLowerCase().startsWith("fr") &&
+    v.lang?.toLowerCase().startsWith("fr") &&
     /natural|neural|siri|microsoft|google/i.test(v.name)
   );
-  bestVoice = (preferred[0] || voices.find(v => v.lang.toLowerCase().startsWith("fr")) || null);
+
+  bestVoice =
+    preferred[0] ||
+    voices.find(v => v.lang?.toLowerCase().startsWith("fr")) ||
+    voices[0] ||
+    null;
+
+  if (bestVoice) setVoiceStatus(`${bestVoice.name} (${bestVoice.lang})`);
+  else setVoiceStatus("non sélectionnée");
 }
 
 window.speechSynthesis.onvoiceschanged = pickBestVoice;
 pickBestVoice();
 
 function speak(text) {
+  if (!ttsEnabled) return;
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "fr-FR";
@@ -86,15 +139,85 @@ function speak(text) {
   window.speechSynthesis.speak(u);
 }
 
-function setStatus(txt) { statusEl.textContent = `Status: ${txt}`; }
-function setModelStatus(txt) { modelStatusEl.textContent = `Modèle: ${txt}`; }
+/* =========================
+   Speech Recognition (STT)
+========================= */
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+const rec = SpeechRecognition ? new SpeechRecognition() : null;
 
-function append(role, text) {
-  logEl.textContent += `[${role}] ${text}\n`;
-  logEl.scrollTop = logEl.scrollHeight;
-  transcript.push({ ts: new Date().toISOString(), role, text });
+if (rec) {
+  rec.lang = "fr-FR";
+  rec.interimResults = false;
+  rec.continuous = true; // on tente de garder l'écoute (selon navigateur)
+  setMicStatus("prêt");
+} else {
+  setMicStatus("non supporté (essaie Chrome/Edge)");
 }
 
+function startRec() {
+  if (!rec) {
+    alert("Reconnaissance vocale non supportée. Essaie Chrome/Edge.");
+    return;
+  }
+  isListening = true;
+  setMicStatus("écoute…");
+  talkBtn.disabled = true;
+  stopBtn.disabled = false;
+
+  try { rec.start(); } catch (_) {
+    // rec.start peut throw si déjà démarré
+  }
+}
+
+function stopRec() {
+  if (!rec) return;
+  isListening = false;
+  setMicStatus("arrêt");
+  stopBtn.disabled = true;
+  talkBtn.disabled = false;
+
+  try { rec.stop(); } catch (_) {}
+}
+
+if (rec) {
+  rec.onresult = async (evt) => {
+    // récupère le dernier résultat final
+    let text = "";
+    for (let i = evt.resultIndex; i < evt.results.length; i++) {
+      const r = evt.results[i];
+      if (r.isFinal) text += (r[0]?.transcript || "");
+    }
+    text = (text || "").trim();
+    if (!text) return;
+
+    // on stop l'écoute automatiquement dès qu'on a une phrase finalisée
+    // (sinon le micro ré-attrape la voix TTS du client)
+    stopRec();
+
+    await askAI(text);
+  };
+
+  rec.onerror = () => {
+    // en cas d'erreur : on repasse prêt
+    setMicStatus("erreur micro/STT");
+    stopBtn.disabled = true;
+    talkBtn.disabled = false;
+    isListening = false;
+  };
+
+  rec.onend = () => {
+    // si ça coupe tout seul alors qu’on est censé écouter : on relance
+    if (isListening) {
+      try { rec.start(); } catch (_) {}
+    } else {
+      setMicStatus("prêt");
+    }
+  };
+}
+
+/* =========================
+   Persona + System prompt
+========================= */
 function personaText() {
   const lvl = levelSel.value;
 
@@ -102,35 +225,39 @@ function personaText() {
 Tu es STRICTEMENT un client dans un jeu de rôle commercial.
 Règles absolues :
 - Tu restes client à 100%. Tu ne dis jamais que tu es une IA.
-- Style oral, phrases courtes, naturelles.
-- Tu poses des objections réalistes.
+- Style oral : phrases courtes, naturelles, crédibles.
+- Tu poses des questions + objections réalistes.
 - Tu ne coaches PAS pendant la scène.
-- Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu produis :
-  1) retranscription propre (dialogue)
-  2) note /20 (Accroche, Découverte, Valeur, Objections, Closing)
-  3) 3 points forts, 3 axes
+- Tu ne donnes pas toutes les infos d'un coup : attends les bonnes questions.
+- Si l'utilisateur dit "DEBRIEF", tu sors du rôle et tu produis EN FRANÇAIS :
+  1) Retranscription propre (dialogue COMMERCIAL/CLIENT)
+  2) Note /20 avec 5 critères: Accroche(0-4), Découverte(0-4), Valeur(0-4), Objections(0-4), Closing(0-4)
+  3) 3 points forts + 3 axes d'amélioration
   4) 5 reformulations prêtes à dire
-  5) plan d'entraînement 7 jours
-Puis termine par "FIN DEBRIEF".
+  5) Plan d'entraînement sur 7 jours (micro-exercices)
+Puis tu termines par "FIN DEBRIEF".
 Niveau: ${lvl}.
 `.trim();
 
   const personas = {
     sophie: `
 Persona: Sophie Bernard
-- Poste: Directrice des achats
-- Personnalité: sceptique, pressée, factuelle
-- Objections obligatoires: "gadget", "ROI concret", "risques / conformité"
+- Poste: Directrice des achats (industrie/services techniques)
+- Personnalité: sceptique, factuelle, pressée
+- Contexte: déjà un prestataire, tu détestes le jargon IA
+- Objections obligatoires à placer: "gadget", "ROI concret", "risques / conformité"
 `.trim(),
     marc: `
 Persona: Marc Delcourt
-- Poste: Directeur commercial
+- Poste: Directeur commercial (B2B services)
 - Personnalité: poli mais pressé, rationnel
-- Objections obligatoires: "on fait déjà", "pas le temps", "prouve-moi le ROI"
+- Contexte: tu écoutes par courtoisie, pas par intérêt
+- Objections obligatoires à placer: "on fait déjà", "pas le temps", "prouve-moi le ROI"
 `.trim(),
     colere: `
 Persona: Nadia Leroy
-- Contexte: client en colère (retard/litige)
+- Contexte: client en colère (retard / litige)
+- Personnalité: impatiente, coupe parfois la parole
 - Objections obligatoires: "inadmissible", "je veux un responsable", "je résilie"
 `.trim()
   };
@@ -142,116 +269,179 @@ function buildSystem() {
   return { role: "system", content: personaText() };
 }
 
-// Modèle WebLLM (dans le navigateur) en format MLC/WebLLM :contentReference[oaicite:4]{index=4}
-const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
+/* =========================
+   Model
+========================= */
+// Tu peux changer ici si tu veux tester un autre modèle WebLLM.
+// Celui-ci est un compromis, mais si c’est trop lent sur certains PC,
+// on pourra le basculer vers un modèle plus léger.
+const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
 
+/* =========================
+   Load model
+========================= */
 async function loadModel() {
-  setStatus("chargement du modèle… (1ère fois = téléchargement)");
+  setStatus("chargement… (1ère fois = téléchargement du modèle)");
+  setModelStatus("téléchargement…");
+
   engine = await CreateMLCEngine(MODEL_ID, {
-    initProgressCallback: (p) => { if (p?.text) setModelStatus(p.text); }
+    initProgressCallback: (p) => {
+      if (p?.text) setModelStatus(p.text);
+    }
   });
+
   setStatus("modèle prêt");
   setModelStatus(MODEL_ID);
 
   messages = [buildSystem()];
-  talkBtn.disabled = false;
+  transcript = [];
+  logEl.textContent = "";
+  appendSystem("Modèle chargé. Maintiens 🎤 pour parler.");
+  appendSystem("Astuce: clique Voix ON/OFF si tu veux couper la voix.");
+
+  // active UI
+  resetBtn.disabled = false;
   debriefBtn.disabled = false;
   exportBtn.disabled = false;
-  resetBtn.disabled = false;
-  append("SYSTEM", "Modèle chargé. Clique 🎤 Parler.");
+  talkBtn.disabled = false;
+  ttsToggleBtn.disabled = false;
 }
 
+/* =========================
+   Ask AI (Streaming)
+========================= */
 async function askAI(userText) {
-  append("COMMERCIAL", userText);
+  if (!engine) return;
+
+  // Important : stop TTS en cours (évite que le micro récupère la voix)
+  window.speechSynthesis.cancel();
+
+  appendCommercial(userText);
   messages.push({ role: "user", content: userText });
 
-  setStatus("l'IA répond…");
-  const reply = await engine.chat.completions.create({
-    messages,
-    temperature: 0.7,
-    max_tokens: 350
-  });
+  setStatus("réponse du client…");
+  renderClientStreamingStart();
 
-  const text = (reply?.choices?.[0]?.message?.content || "").trim() || "(pas de réponse)";
-  messages.push({ role: "assistant", content: text });
+  let finalText = "";
 
-  append("CLIENT", text);
-  speak(text);
+  try {
+    // Streaming: on itère sur les chunks
+    const stream = await engine.chat.completions.create({
+      messages,
+      temperature: 0.7,
+      max_tokens: 220,
+      stream: true
+    });
+
+    for await (const chunk of stream) {
+      const delta = chunk?.choices?.[0]?.delta?.content || "";
+      if (delta) {
+        finalText += delta;
+        renderClientStreamingDelta(delta);
+      }
+    }
+  } catch (e) {
+    setStatus("erreur IA");
+    renderClientStreamingEnd("(Erreur: impossible de répondre. Réessaie.)");
+    messages.push({ role: "assistant", content: "(Erreur de réponse)" });
+    return;
+  }
+
+  finalText = (finalText || "").trim() || "(pas de réponse)";
+  // fin streaming visuel + ajout à la retranscription
+  renderClientStreamingEnd(finalText);
+
+  // stocke dans l’historique complet
+  messages.push({ role: "assistant", content: finalText });
+
+  // parler après avoir fini (plus naturel que parler pendant le streaming)
+  speak(finalText);
+
   setStatus("prêt");
 }
 
-loadBtn.onclick = async () => {
-  loadBtn.disabled = true;
-  try { await loadModel(); }
-  catch (e) {
-    loadBtn.disabled = false;
-    setStatus("erreur chargement modèle");
-    append("SYSTEM", "Erreur: " + String(e));
-  }
-};
-
-talkBtn.onclick = () => {
-  if (!rec) { alert("Reconnaissance vocale non supportée. Essaie Chrome."); return; }
-  talkBtn.disabled = true;
-  stopBtn.disabled = false;
-  rec.start();
-};
-
-stopBtn.onclick = () => {
-  if (!rec) return;
-  rec.stop();
-  stopBtn.disabled = true;
-  talkBtn.disabled = false;
-};
-
-if (rec) {
-  rec.onresult = async (evt) => {
-    stopBtn.disabled = true;
-    talkBtn.disabled = false;
-    const text = evt.results?.[0]?.[0]?.transcript?.trim() || "";
-    if (text) await askAI(text);
-  };
-  rec.onerror = () => {
-    stopBtn.disabled = true;
-    talkBtn.disabled = false;
-    append("SYSTEM", "Erreur micro / speech recognition. (Chrome recommandé)");
-  };
-}
-
-debriefBtn.onclick = () => askAI("DEBRIEF");
-
-exportBtn.onclick = () => {
+/* =========================
+   Export transcript
+========================= */
+function exportTranscript() {
   const lines = transcript.map(x => `${x.ts} [${x.role}] ${x.text}`).join("\n");
   const blob = new Blob([lines], { type: "text/plain;charset=utf-8" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `retranscription_roleplay.txt`;
+  a.download = `retranscription_roleplay_${new Date().toISOString().slice(0,19).replaceAll(":","-")}.txt`;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/* =========================
+   UI bindings
+========================= */
+loadBtn.onclick = async () => {
+  loadBtn.disabled = true;
+  try {
+    await loadModel();
+  } catch (e) {
+    loadBtn.disabled = false;
+    setStatus("erreur chargement modèle");
+    appendSystem("Erreur chargement: " + String(e));
+  }
 };
 
 resetBtn.onclick = () => {
+  if (!engine) return;
+  window.speechSynthesis.cancel();
   transcript = [];
   logEl.textContent = "";
   messages = [buildSystem()];
-  append("SYSTEM", "Session reset. Clique 🎤 Parler.");
+  appendSystem("Session réinitialisée. Maintiens 🎤 pour parler.");
 };
 
+debriefBtn.onclick = () => askAI("DEBRIEF");
+
+exportBtn.onclick = exportTranscript;
+
+ttsToggleBtn.onclick = () => {
+  ttsEnabled = !ttsEnabled;
+  ttsToggleBtn.textContent = ttsEnabled ? "🔊 Voix ON" : "🔇 Voix OFF";
+  if (!ttsEnabled) window.speechSynthesis.cancel();
+};
+
+/* Push-to-talk events */
+function bindPushToTalk() {
+  // Souris
+  talkBtn.onmousedown = (e) => { e.preventDefault(); startRec(); };
+  talkBtn.onmouseup = (e) => { e.preventDefault(); stopRec(); };
+  talkBtn.onmouseleave = (e) => { e.preventDefault(); stopRec(); };
+
+  // Mobile
+  talkBtn.ontouchstart = (e) => { e.preventDefault(); startRec(); };
+  talkBtn.ontouchend = (e) => { e.preventDefault(); stopRec(); };
+  talkBtn.ontouchcancel = (e) => { e.preventDefault(); stopRec(); };
+
+  stopBtn.onclick = (e) => { e.preventDefault(); stopRec(); };
+}
+bindPushToTalk();
+
+/* Persona/level change => nouvelle session (on garde transcript séparé) */
 personaSel.onchange = () => {
   if (!engine) return;
-  messages = [buildSystem()];
+  window.speechSynthesis.cancel();
   transcript = [];
   logEl.textContent = "";
-  append("SYSTEM", "Persona changé. Nouvelle session.");
+  messages = [buildSystem()];
+  appendSystem("Persona changé. Nouvelle session.");
 };
 
 levelSel.onchange = () => {
   if (!engine) return;
-  messages = [buildSystem()];
+  window.speechSynthesis.cancel();
   transcript = [];
   logEl.textContent = "";
-  append("SYSTEM", "Niveau changé. Nouvelle session.");
+  messages = [buildSystem()];
+  appendSystem("Niveau changé. Nouvelle session.");
 };
 
-append("SYSTEM", "Clique ⬇️ Charger le modèle IA pour commencer.");
+/* Init */
+appendSystem("Clique ⬇️ Charger le modèle IA pour commencer.");
+appendSystem("Ensuite: maintiens 🎤 pour parler. Clique DEBRIEF à la fin.");
