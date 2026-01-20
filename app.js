@@ -6,7 +6,6 @@
 // ✅ Anti-prénoms : suppression “Bonjour Claire” + neutralisation
 // ✅ Timer d’appel + sonnerie + beep + états visuels
 // ✅ Micro dictée + export retranscription
-// ✅ Modèle rapide par défaut : 1B, puis fallback 3B
 
 import * as webllm from "https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm/+esm";
 
@@ -537,8 +536,8 @@ function buildSystemMessage() {
    Model (rapide d’abord)
 ========================= */
 const MODEL_CANDIDATES = [
-  "Llama-3.2-1B-Instruct-q4f16_1-MLC",
   "Llama-3.2-3B-Instruct-q4f16_1-MLC"
+   Llama-3.2-1B-Instruct-q4f16_1-MLC",
 ];
 
 function hasWebGPU() {
