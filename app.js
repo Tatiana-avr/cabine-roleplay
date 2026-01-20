@@ -5,7 +5,43 @@ const modelStatusEl = document.getElementById("modelStatus");
 const logEl = document.getElementById("log");
 
 const loadBtn = document.getElementById("loadBtn");
-const talkBtn = document.getElementById("talkBtn");
+function startRec() {
+  if (!rec) { alert("Reconnaissance vocale non supportée. Essaie Chrome/Edge."); return; }
+  talkBtn.disabled = true;
+  stopBtn.disabled = false;
+  rec.start();
+}
+
+function stopRec() {
+  if (!rec) return;
+  rec.stop();
+  stopBtn.disabled = true;
+  talkBtn.disabled = false;
+}
+
+// Appui = start, relâche = stop (souris)
+talkBtn.onmousedown = startRec;
+talkBtn.onmouseup = stopRec;
+talkBtn.onmouseleave = stopRec;
+
+// Mobile: toucher = start, relâcher = stop
+talkBtn.ontouchstart = (e) => { e.preventDefault(); startRec(); };
+talkBtn.ontouchend = (e) => { e.preventDefault(); stopRec(); };
+
+// bouton stop reste possible
+stopBtn.onclick = stopRec;
+let isListening = false;
+
+function startRec() { isListening = true; /* ... */ }
+function stopRec() { isListening = false; /* ... */ }
+
+if (rec) {
+  rec.onend = () => {
+    // si ça s’arrête tout seul pendant qu’on écoute, on relance
+    if (isListening) rec.start();
+  };
+}
+
 const stopBtn = document.getElementById("stopBtn");
 const debriefBtn = document.getElementById("debriefBtn");
 const exportBtn = document.getElementById("exportBtn");
@@ -25,10 +61,28 @@ if (rec) {
   rec.continuous = false;
 }
 
+let bestVoice = null;
+
+function pickBestVoice() {
+  const voices = window.speechSynthesis.getVoices();
+  // On privilégie les voix FR "naturelles" (Edge/Windows/Mac peuvent en avoir)
+  const preferred = voices.filter(v =>
+    v.lang.toLowerCase().startsWith("fr") &&
+    /natural|neural|siri|microsoft|google/i.test(v.name)
+  );
+  bestVoice = (preferred[0] || voices.find(v => v.lang.toLowerCase().startsWith("fr")) || null);
+}
+
+window.speechSynthesis.onvoiceschanged = pickBestVoice;
+pickBestVoice();
+
 function speak(text) {
   window.speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "fr-FR";
+  if (bestVoice) u.voice = bestVoice;
+  u.rate = 1.02;
+  u.pitch = 1.0;
   window.speechSynthesis.speak(u);
 }
 
@@ -89,7 +143,7 @@ function buildSystem() {
 }
 
 // Modèle WebLLM (dans le navigateur) en format MLC/WebLLM :contentReference[oaicite:4]{index=4}
-const MODEL_ID = "Llama-3.2-3B-Instruct-q4f16_1-MLC";
+const MODEL_ID = "Llama-3.2-1B-Instruct-q4f16_1-MLC";
 
 async function loadModel() {
   setStatus("chargement du modèle… (1ère fois = téléchargement)");
